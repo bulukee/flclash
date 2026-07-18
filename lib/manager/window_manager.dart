@@ -145,7 +145,6 @@ class WindowHeader extends StatefulWidget {
 
 class _WindowHeaderState extends State<WindowHeader> {
   final isMaximizedNotifier = ValueNotifier<bool>(false);
-  final isPinNotifier = ValueNotifier<bool>(false);
 
   @override
   void initState() {
@@ -155,13 +154,11 @@ class _WindowHeaderState extends State<WindowHeader> {
 
   Future<void> _initNotifier() async {
     isMaximizedNotifier.value = await windowManager.isMaximized();
-    isPinNotifier.value = await windowManager.isAlwaysOnTop();
   }
 
   @override
   void dispose() {
     isMaximizedNotifier.dispose();
-    isPinNotifier.dispose();
     super.dispose();
   }
 
@@ -184,35 +181,33 @@ class _WindowHeaderState extends State<WindowHeader> {
     }
   }
 
-  Future<void> _updatePin() async {
-    final isAlwaysOnTop = await windowManager.isAlwaysOnTop();
-    await windowManager.setAlwaysOnTop(!isAlwaysOnTop);
-    isPinNotifier.value = await windowManager.isAlwaysOnTop();
-  }
-
   Widget _buildActions() {
+    ButtonStyle actionStyle({bool close = false}) {
+      return IconButton.styleFrom(
+        foregroundColor: close
+            ? const Color(0xFF758398)
+            : const Color(0xFF718198),
+        hoverColor: close ? const Color(0xFFFFE8EA) : const Color(0xFFEAF0F8),
+        highlightColor: Colors.transparent,
+        minimumSize: const Size(32, 32),
+        maximumSize: const Size(32, 32),
+        padding: EdgeInsets.zero,
+        iconSize: 16,
+      );
+    }
+
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
-          onPressed: () async {
-            _updatePin();
-          },
-          icon: ValueListenableBuilder(
-            valueListenable: isPinNotifier,
-            builder: (_, value, _) {
-              return value
-                  ? const Icon(Icons.push_pin)
-                  : const Icon(Icons.push_pin_outlined);
-            },
-          ),
-        ),
-        IconButton(
+          style: actionStyle(),
           onPressed: () {
             windowManager.minimize();
           },
           icon: const Icon(Icons.remove),
         ),
         IconButton(
+          style: actionStyle(),
           onPressed: () async {
             _updateMaximized();
           },
@@ -220,12 +215,13 @@ class _WindowHeaderState extends State<WindowHeader> {
             valueListenable: isMaximizedNotifier,
             builder: (_, value, _) {
               return value
-                  ? const Icon(Icons.filter_none, size: 20)
-                  : const Icon(Icons.crop_square);
+                  ? const Icon(Icons.filter_none, size: 14)
+                  : const Icon(Icons.crop_square, size: 16);
             },
           ),
         ),
         IconButton(
+          style: actionStyle(close: true),
           onPressed: () {
             globalState.container
                 .read(systemActionProvider.notifier)
@@ -255,7 +251,7 @@ class _WindowHeaderState extends State<WindowHeader> {
                 _updateMaximized();
               },
               child: Container(
-                color: context.colorScheme.secondary.opacity15,
+                color: const Color(0xFFF7F9FD),
                 alignment: Alignment.centerLeft,
                 height: kHeaderHeight,
               ),
@@ -287,7 +283,11 @@ class AppIcon extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       child: Transform.translate(
         offset: const Offset(0, -1),
-        child: Image.asset('assets/images/icon.png', width: 34, height: 34),
+        child: Image.asset(
+          'assets/images/brand/salmon-coral-transparent.png',
+          width: 38,
+          height: 38,
+        ),
       ),
     );
   }

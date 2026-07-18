@@ -58,14 +58,21 @@ Future<void> runCommandStream(
     workingDirectory: workingDirectory,
     environment: environment,
     includeParentEnvironment: true,
-    runInShell: Platform.isWindows,
+    // Launch Go/Cargo directly. Passing arguments such as
+    // `-ldflags=-w -s` through cmd.exe can split the embedded space and make
+    // an otherwise valid Windows Go build fail.
+    runInShell: false,
   );
-  process.stdout.transform(utf8.decoder).listen((data) {
+  process.stdout
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .listen((data) {
     for (final line in data.split('\n')) {
       if (line.isNotEmpty) _log.info(line);
     }
   });
-  process.stderr.transform(utf8.decoder).listen((data) {
+  process.stderr
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .listen((data) {
     for (final line in data.split('\n')) {
       if (line.isNotEmpty) _log.warning(line);
     }

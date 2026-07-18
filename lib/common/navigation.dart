@@ -13,64 +13,47 @@ class Navigation {
     return [
       NavigationItem(
         keep: false,
-        icon: const Icon(Icons.space_dashboard),
+        icon: const Icon(Icons.home_rounded),
         label: PageLabel.dashboard,
         builder: (_) =>
             const DashboardView(key: GlobalObjectKey(PageLabel.dashboard)),
       ),
       NavigationItem(
-        icon: const Icon(Icons.article),
-        label: PageLabel.proxies,
-        builder: (_) =>
-            const ProxiesView(key: GlobalObjectKey(PageLabel.proxies)),
-        modes: hasProxies
-            ? [NavigationItemMode.mobile, NavigationItemMode.desktop]
-            : [],
-      ),
-      NavigationItem(
-        icon: const Icon(Icons.folder),
+        icon: const Icon(Icons.travel_explore_rounded),
         label: PageLabel.profiles,
         builder: (_) =>
-            const ProfilesView(key: GlobalObjectKey(PageLabel.profiles)),
+            const ProxiesView(key: GlobalObjectKey(PageLabel.profiles)),
+        modes: const [NavigationItemMode.mobile, NavigationItemMode.desktop],
       ),
       NavigationItem(
-        icon: const Icon(Icons.view_timeline),
-        label: PageLabel.requests,
+        icon: const Icon(Icons.shopping_bag_rounded),
+        label: PageLabel.proxies,
         builder: (_) =>
-            const RequestsView(key: GlobalObjectKey(PageLabel.requests)),
-        description: 'requestsDesc',
-        modes: [NavigationItemMode.desktop, NavigationItemMode.more],
+            const PurchaseView(key: GlobalObjectKey(PageLabel.proxies)),
+        modes: const [NavigationItemMode.mobile, NavigationItemMode.desktop],
       ),
       NavigationItem(
-        icon: const Icon(Icons.ballot),
-        label: PageLabel.connections,
-        builder: (_) =>
-            const ConnectionsView(key: GlobalObjectKey(PageLabel.connections)),
-        description: 'connectionsDesc',
-        modes: [NavigationItemMode.desktop, NavigationItemMode.more],
+        keep: false,
+        icon: const Icon(Icons.card_giftcard_rounded),
+        label: PageLabel.invites,
+        builder: (_) => const InvitationPage(),
+        modes: const [NavigationItemMode.desktop],
       ),
       NavigationItem(
-        icon: const Icon(Icons.storage),
-        label: PageLabel.resources,
-        description: 'resourcesDesc',
-        builder: (_) =>
-            const ResourcesView(key: GlobalObjectKey(PageLabel.resources)),
-        modes: [NavigationItemMode.more],
+        keep: false,
+        icon: const Icon(Icons.support_agent_rounded),
+        label: PageLabel.customerService,
+        builder: (_) => const AccountView(
+          initialAction: AccountInitialAction.customerService,
+        ),
+        modes: const [NavigationItemMode.desktop],
       ),
       NavigationItem(
-        icon: const Icon(Icons.adb),
-        label: PageLabel.logs,
-        builder: (_) => const LogsView(key: GlobalObjectKey(PageLabel.logs)),
-        description: 'logsDesc',
-        modes: openLogs
-            ? [NavigationItemMode.desktop, NavigationItemMode.more]
-            : [],
-      ),
-      NavigationItem(
-        icon: const Icon(Icons.construction),
+        icon: const Icon(Icons.account_circle_rounded),
         label: PageLabel.tools,
-        builder: (_) => const ToolsView(key: GlobalObjectKey(PageLabel.tools)),
-        modes: [NavigationItemMode.desktop, NavigationItemMode.mobile],
+        builder: (_) =>
+            const AccountView(key: GlobalObjectKey(PageLabel.tools)),
+        modes: const [NavigationItemMode.mobile, NavigationItemMode.desktop],
       ),
     ];
   }

@@ -258,10 +258,14 @@ class DelayDataSource extends _$DelayDataSource with AutoDisposeNotifierMixin {
   void setDelay(Delay delay) {
     if (state[delay.url]?[delay.name] != delay.value) {
       final DelayMap newDelayMap = Map.from(state);
-      if (newDelayMap[delay.url] == null) {
-        newDelayMap[delay.url] = {};
-      }
-      newDelayMap[delay.url]![delay.name] = delay.value;
+      // Clone the nested map before changing it. Mutating the nested map from
+      // the previous state made Riverpod's selected old/new values identical,
+      // so node cards only refreshed after the page was reopened.
+      final nodeDelays = Map<String, int?>.from(
+        state[delay.url] ?? const <String, int?>{},
+      );
+      nodeDelays[delay.name] = delay.value;
+      newDelayMap[delay.url] = nodeDelays;
       value = newDelayMap;
     }
   }

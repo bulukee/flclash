@@ -7,6 +7,7 @@ import com.follow.clash.plugins.ServicePlugin
 import com.follow.clash.plugins.TilePlugin
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,6 +25,17 @@ class MainActivity : FlutterActivity(),
         flutterEngine.plugins.add(AppPlugin())
         flutterEngine.plugins.add(ServicePlugin())
         flutterEngine.plugins.add(TilePlugin())
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.follow.clash/customer_service"
+        ).setMethodCallHandler { call, result ->
+            if (call.method == "open") {
+                startActivity(CustomerServiceActivity.createIntent(this))
+                result.success(null)
+            } else {
+                result.notImplemented()
+            }
+        }
         State.flutterEngine = flutterEngine
     }
 

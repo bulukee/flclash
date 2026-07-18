@@ -27,7 +27,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"FlClash", origin, size)) {
+  // Use universal character names so the title is independent of the active
+  // Windows compiler code page.
+  if (!window.Create(L"\u4E09\u6587\u9C7C", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

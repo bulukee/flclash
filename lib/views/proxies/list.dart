@@ -398,8 +398,6 @@ class ListHeader extends StatefulWidget {
 }
 
 class _ListHeaderState extends State<ListHeader> {
-  var isLock = false;
-
   String get icon => widget.group.icon;
 
   String get groupName => widget.group.name;
@@ -407,13 +405,6 @@ class _ListHeaderState extends State<ListHeader> {
   String get groupType => widget.group.type.name;
 
   bool get isExpand => widget.isExpand;
-
-  Future<void> _delayTest() async {
-    if (isLock) return;
-    isLock = true;
-    await delayTest(widget.group.all, widget.group.testUrl);
-    isLock = false;
-  }
 
   void _handleChange(String groupName) {
     widget.onChange(groupName);
@@ -565,16 +556,6 @@ class _ListHeaderState extends State<ListHeader> {
                     icon: const Icon(Icons.adjust),
                   ),
                   const SizedBox(width: 2),
-                  IconButton(
-                    iconSize: 20,
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.all(2),
-                    onPressed: _delayTest,
-                    style: const ButtonStyle(
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    icon: const Icon(Icons.network_ping),
-                  ),
                   const SizedBox(width: 6),
                 ] else
                   const SizedBox(width: 6),

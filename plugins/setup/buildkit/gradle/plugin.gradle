@@ -12,17 +12,25 @@ def androidArch = System.getenv('ANDROID_ARCH')
 def targetPlatform = project.findProperty('target-platform') ?:
         rootProject.findProperty('target-platform')
 def androidNdk = System.getenv('ANDROID_NDK')
+def bashExecutable = System.getenv('BASH') ?: 'bash'
+def bashPath = System.getenv('BASH_PATH')
 def archArgs = androidArch
         ? ['--arch', androidArch]
         : (targetPlatform ? ['--target-platform', targetPlatform.toString()] : [])
 
 task buildGoCore(type: Exec) {
+    onlyIf { System.getenv('SKIP_GO_CORE') != 'true' }
     workingDir buildkitDir
-    commandLine 'bash', launcher, 'android', *archArgs
+    commandLine bashExecutable, launcher, 'android', *archArgs
 
     environment 'ANDROID_NDK', androidNdk
     environment 'APP_ENV', project.hasProperty('appEnv') ? project.appEnv : 'pre'
     environment 'PROJECT_DIR', projectRoot
+    if (bashPath) {
+        def effectivePath = "${bashPath}${File.pathSeparator}${System.getenv('PATH')}"
+        environment 'PATH', effectivePath
+        environment 'Path', effectivePath
+    }
 }
 
 def goCoreTask = buildGoCore

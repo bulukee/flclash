@@ -208,6 +208,14 @@ class CoreController {
     return Delay.fromJson(json.decode(data));
   }
 
+  Future<Map<String, int>> getGroupDelay(String url, String groupName) async {
+    final data = await _interface.asyncTestGroupDelay(url, groupName);
+    final raw = json.decode(data) as Map<String, dynamic>;
+    return raw.map(
+      (name, value) => MapEntry(name, (value as num?)?.toInt() ?? -1),
+    );
+  }
+
   Future<Map<String, dynamic>> getConfig(int id) async {
     final profilePath = await appPath.getProfilePath(id.toString());
     final res = await _interface.getConfig(profilePath);

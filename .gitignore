@@ -75,3 +75,9 @@ devtools_options.yaml
 # FVM Version Cache
 .fvm/
 .fvmrc
+
+# Local Codex/Dart analysis and generated scratch data
+/.dart-local/
+/.dart-roaming/
+/.runtime/
+/tmp/

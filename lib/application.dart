@@ -10,6 +10,7 @@ import 'package:fl_clash/manager/manager.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/services/salmon_update_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -40,7 +41,18 @@ class ApplicationState extends ConsumerState<Application> {
     required Brightness brightness,
     int? primaryColor,
   }) {
-    return ref.read(genColorSchemeProvider(brightness));
+    return ColorScheme.fromSeed(
+      seedColor: const Color(0xFF245CFF),
+      brightness: brightness,
+    ).copyWith(
+      primary: const Color(0xFF245CFF),
+      secondary: const Color(0xFF00BCEB),
+      tertiary: const Color(0xFF755BFF),
+      error: const Color(0xFFE5484D),
+      surface: const Color(0xFFFFFFFF),
+      onSurface: const Color(0xFF10233F),
+      outline: const Color(0xFFD8E3F3),
+    );
   }
 
   @override
@@ -55,6 +67,13 @@ class ApplicationState extends ConsumerState<Application> {
       _autoUpdateProfilesTask();
       _initLink();
       app?.initShortcuts();
+      if (mounted) {
+        await Future<void>.delayed(const Duration(seconds: 3));
+        final updateContext = globalState.navigatorKey.currentContext;
+        if (mounted && updateContext != null && updateContext.mounted) {
+          await SalmonUpdateService.checkAndPrompt(updateContext);
+        }
+      }
     });
   }
 
@@ -160,13 +179,116 @@ class ApplicationState extends ConsumerState<Application> {
           title: appName,
           locale: utils.getLocaleForString(locale),
           supportedLocales: AppLocalizations.delegate.supportedLocales,
-          themeMode: themeProps.themeMode,
+          themeMode: ThemeMode.light,
           theme: ThemeData(
             useMaterial3: true,
             pageTransitionsTheme: _pageTransitionsTheme,
+            scaffoldBackgroundColor: const Color(0xFFF3F6FC),
             colorScheme: _getAppColorScheme(
               brightness: Brightness.light,
-              primaryColor: themeProps.primaryColor,
+              primaryColor: 0xFF2F6BFF,
+            ),
+            appBarTheme: const AppBarTheme(
+              backgroundColor: Color(0xFFF3F6FC),
+              surfaceTintColor: Colors.transparent,
+              centerTitle: false,
+              titleTextStyle: TextStyle(
+                color: Color(0xFF10233F),
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            iconTheme: const IconThemeData(color: Color(0xFF29476F)),
+            dividerTheme: const DividerThemeData(
+              color: Color(0xFFD8E3F3),
+              thickness: 1,
+              space: 1,
+            ),
+            dialogTheme: DialogThemeData(
+              backgroundColor: const Color(0xFFFFFFFF),
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(26),
+              ),
+              titleTextStyle: const TextStyle(
+                color: Color(0xFF10233F),
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            bottomSheetTheme: const BottomSheetThemeData(
+              backgroundColor: Color(0xFFFFFFFF),
+              surfaceTintColor: Colors.transparent,
+              modalBackgroundColor: Color(0xFFFFFFFF),
+              modalBarrierColor: Color(0x520B1730),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              ),
+              showDragHandle: true,
+              dragHandleColor: Color(0xFF9EB1CF),
+            ),
+            progressIndicatorTheme: const ProgressIndicatorThemeData(
+              color: Color(0xFF245CFF),
+              linearTrackColor: Color(0xFFDCE7FA),
+              circularTrackColor: Color(0xFFDCE7FA),
+            ),
+            cardTheme: CardThemeData(
+              elevation: 0,
+              color: const Color(0xFFFFFFFF),
+              surfaceTintColor: Colors.transparent,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+            ),
+            navigationBarTheme: NavigationBarThemeData(
+              backgroundColor: const Color(0xFFFAFCFF),
+              indicatorColor: const Color(0xFFE2EBFF),
+              height: 72,
+              labelTextStyle: WidgetStateProperty.all(
+                const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF405777),
+                ),
+              ),
+            ),
+            snackBarTheme: SnackBarThemeData(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: const Color(0xFF173D82),
+              contentTextStyle: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+              ),
+              elevation: 3,
+              insetPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+              shape: RoundedRectangleBorder(
+                side: const BorderSide(color: Color(0xFF4D7DFF)),
+                borderRadius: BorderRadius.circular(18),
+              ),
+            ),
+            inputDecorationTheme: InputDecorationTheme(
+              filled: true,
+              fillColor: const Color(0xFFFFFFFF),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(18),
+                borderSide: const BorderSide(color: Color(0xFFD8E3F3)),
+              ),
+            ),
+            filledButtonTheme: FilledButtonThemeData(
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 13,
+                ),
+              ),
             ),
           ),
           darkTheme: ThemeData(
@@ -180,7 +302,7 @@ class ApplicationState extends ConsumerState<Application> {
           home: child!,
         );
       },
-      child: const HomePage(),
+      child: const SalmonGate(child: HomePage()),
     );
   }
 

@@ -7,6 +7,10 @@ echo "warning: [setup] Plugin triggered"
 BASEDIR=$(cd "$(dirname "$0")" && pwd)
 PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
 
+if command -v cygpath >/dev/null 2>&1; then
+  PROJECT_DIR=$(cygpath -u "$PROJECT_DIR")
+fi
+
 if [ ! -f "$PROJECT_DIR/pubspec.yaml" ] || [ ! -d "$PROJECT_DIR/core" ]; then
   echo "Error: Could not find project root at $PROJECT_DIR" >&2
   exit 1
@@ -14,6 +18,11 @@ fi
 
 BUILD_TOOL_PKG_DIR="$BASEDIR/build_tool"
 BUILD_TOOL_TEMP_DIR="$PROJECT_DIR/build/setup_build_tool"
+DART_BUILD_TOOL_PKG_DIR="$BUILD_TOOL_PKG_DIR"
+
+if command -v cygpath >/dev/null 2>&1; then
+  DART_BUILD_TOOL_PKG_DIR=$(cygpath -w "$BUILD_TOOL_PKG_DIR")
+fi
 
 mkdir -p "$BUILD_TOOL_TEMP_DIR"
 cd "$BUILD_TOOL_TEMP_DIR"
@@ -34,7 +43,7 @@ environment:
 
 dependencies:
   build_tool:
-    path: "$BUILD_TOOL_PKG_DIR"
+    path: '$DART_BUILD_TOOL_PKG_DIR'
 EOF
 
 mkdir -p "bin"

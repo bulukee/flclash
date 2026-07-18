@@ -54,6 +54,71 @@ class AppLocalizations {
     return Localizations.of<AppLocalizations>(context, AppLocalizations);
   }
 
+  /// `Welcome to Salmon`
+  String get salmonWelcome {
+    return Intl.message(
+      'Welcome to Salmon',
+      name: 'salmonWelcome',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign in to automatically load your subscription`
+  String get salmonLoginSubtitle {
+    return Intl.message(
+      'Sign in to automatically load your subscription',
+      name: 'salmonLoginSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign in`
+  String get salmonLogin {
+    return Intl.message('Sign in', name: 'salmonLogin', desc: '', args: []);
+  }
+
+  /// `Signing in...`
+  String get salmonLoggingIn {
+    return Intl.message(
+      'Signing in...',
+      name: 'salmonLoggingIn',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sign-in failed. Please check your account and network.`
+  String get salmonLoginFailed {
+    return Intl.message(
+      'Sign-in failed. Please check your account and network.',
+      name: 'salmonLoginFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This field is required`
+  String get salmonRequiredField {
+    return Intl.message(
+      'This field is required',
+      name: 'salmonRequiredField',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Loading your subscription...`
+  String get salmonLoading {
+    return Intl.message(
+      'Loading your subscription...',
+      name: 'salmonLoading',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Rule`
   String get rule {
     return Intl.message('Rule', name: 'rule', desc: '', args: []);
@@ -74,9 +139,9 @@ class AppLocalizations {
     return Intl.message('Dashboard', name: 'dashboard', desc: '', args: []);
   }
 
-  /// `Proxies`
+  /// `Plans`
   String get proxies {
-    return Intl.message('Proxies', name: 'proxies', desc: '', args: []);
+    return Intl.message('Plans', name: 'proxies', desc: '', args: []);
   }
 
   /// `Profile`
@@ -4491,6 +4556,176 @@ class AppLocalizations {
       name: 'entriesCount',
       desc: '',
       args: [count],
+    );
+  }
+
+  /// `Direct`
+  String get salmonDirectMode {
+    return Intl.message('Direct', name: 'salmonDirectMode', desc: '', args: []);
+  }
+
+  /// `Tap to connect securely`
+  String get salmonTapConnect {
+    return Intl.message(
+      'Tap to connect securely',
+      name: 'salmonTapConnect',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Tap to disconnect`
+  String get salmonTapDisconnect {
+    return Intl.message(
+      'Tap to disconnect',
+      name: 'salmonTapDisconnect',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node test`
+  String get salmonTestLatency {
+    return Intl.message(
+      'Node test',
+      name: 'salmonTestLatency',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Securely connected`
+  String get salmonConnected {
+    return Intl.message(
+      'Securely connected',
+      name: 'salmonConnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Salmon`
+  String get salmonHomeTitle {
+    return Intl.message('Salmon', name: 'salmonHomeTitle', desc: '', args: []);
+  }
+
+  /// `Rule`
+  String get salmonRuleMode {
+    return Intl.message('Rule', name: 'salmonRuleMode', desc: '', args: []);
+  }
+
+  /// `Current node`
+  String get salmonNode {
+    return Intl.message('Current node', name: 'salmonNode', desc: '', args: []);
+  }
+
+  /// `Not connected`
+  String get salmonDisconnected {
+    return Intl.message(
+      'Not connected',
+      name: 'salmonDisconnected',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Proxy mode`
+  String get salmonMode {
+    return Intl.message('Proxy mode', name: 'salmonMode', desc: '', args: []);
+  }
+
+  /// `Plans`
+  String get salmonPlans {
+    return Intl.message('Plans', name: 'salmonPlans', desc: '', args: []);
+  }
+
+  /// `Select node`
+  String get salmonSelectNode {
+    return Intl.message(
+      'Select node',
+      name: 'salmonSelectNode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Tap to test latency`
+  String get salmonTapToTest {
+    return Intl.message(
+      'Tap to test latency',
+      name: 'salmonTapToTest',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No plans are available right now`
+  String get salmonNoPlans {
+    return Intl.message(
+      'No plans are available right now',
+      name: 'salmonNoPlans',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Fast, stable and ready whenever you are`
+  String get salmonPlansSubtitle {
+    return Intl.message(
+      'Fast, stable and ready whenever you are',
+      name: 'salmonPlansSubtitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Node latency test completed`
+  String get salmonTestComplete {
+    return Intl.message(
+      'Node latency test completed',
+      name: 'salmonTestComplete',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Global`
+  String get salmonGlobalMode {
+    return Intl.message('Global', name: 'salmonGlobalMode', desc: '', args: []);
+  }
+
+  /// `From`
+  String get salmonFrom {
+    return Intl.message('From', name: 'salmonFrom', desc: '', args: []);
+  }
+
+  /// `Buy`
+  String get salmonBuyNow {
+    return Intl.message('Buy', name: 'salmonBuyNow', desc: '', args: []);
+  }
+
+  /// `Testing...`
+  String get salmonTesting {
+    return Intl.message(
+      'Testing...',
+      name: 'salmonTesting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Network plan`
+  String get salmonPlan {
+    return Intl.message('Network plan', name: 'salmonPlan', desc: '', args: []);
+  }
+
+  /// `Choose your plan`
+  String get salmonPlansTitle {
+    return Intl.message(
+      'Choose your plan',
+      name: 'salmonPlansTitle',
+      desc: '',
+      args: [],
     );
   }
 }

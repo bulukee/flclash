@@ -260,6 +260,59 @@ func handleAsyncTestDelay(paramsString string, fn func(string)) {
 	})
 }
 
+// handleAsyncTestGroupDelay mirrors Mihomo's /group/{name}/delay endpoint.
+// Clash Verge Rev uses this group-level test for its proxy page: the core
+// performs one bounded concurrent test and returns a name-to-delay map.
+func handleAsyncTestGroupDelay(paramsString string, fn func(string)) {
+	mBatch.Go("group:"+paramsString, func() (bool, error) {
+		params := &TestDelayParams{}
+		if err := json.Unmarshal([]byte(paramsString), params); err != nil {
+			fn("{}")
+			return false, nil
+		}
+
+		expectedStatus, err := utils.NewUnsignedRanges[uint16]("")
+		if err != nil {
+			fn("{}")
+			return false, nil
+		}
+
+		ctx, cancel := context.WithTimeout(
+			context.Background(),
+			time.Millisecond*time.Duration(params.Timeout),
+		)
+		defer cancel()
+
+		proxy := tunnel.AllProxies()[params.ProxyName]
+		if proxy == nil {
+			fn("{}")
+			return false, nil
+		}
+		group, ok := proxy.Adapter().(outboundgroup.ProxyGroup)
+		if !ok {
+			fn("{}")
+			return false, nil
+		}
+
+		testURL := constant.DefaultTestURL
+		if params.TestUrl != "" {
+			testURL = params.TestUrl
+		}
+		delays, err := group.URLTest(ctx, testURL, expectedStatus)
+		if err != nil {
+			fn("{}")
+			return false, nil
+		}
+		data, err := json.Marshal(delays)
+		if err != nil {
+			fn("{}")
+			return false, nil
+		}
+		fn(string(data))
+		return false, nil
+	})
+}
+
 func handleGetConnections() string {
 	runLock.Lock()
 	defer runLock.Unlock()

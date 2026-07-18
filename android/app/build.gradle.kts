@@ -1,11 +1,10 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.util.Properties
+import java.util.Base64
 
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
-    id("com.google.gms.google-services")
-    id("com.google.firebase.crashlytics")
 }
 
 val localProperties = Properties().apply {
@@ -16,9 +15,17 @@ val localProperties = Properties().apply {
 }
 
 val mStoreFile: File = file("keystore.jks")
-val mStorePassword: String? = localProperties.getProperty("storePassword")
+fun decodedProperty(base64Name: String, legacyName: String): String? {
+    val encoded = localProperties.getProperty(base64Name)
+    if (!encoded.isNullOrBlank()) {
+        return String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)
+    }
+    return localProperties.getProperty(legacyName)
+}
+
+val mStorePassword: String? = decodedProperty("storePasswordBase64", "storePassword")
 val mKeyAlias: String? = localProperties.getProperty("keyAlias")
-val mKeyPassword: String? = localProperties.getProperty("keyPassword")
+val mKeyPassword: String? = decodedProperty("keyPasswordBase64", "keyPassword")
 val isRelease =
     mStoreFile.exists() && mStorePassword != null && mKeyAlias != null && mKeyPassword != null
 
@@ -36,7 +43,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.follow.clash"
+        applicationId = "com.swywl.salmon"
         minSdk = flutter.minSdkVersion
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = flutter.versionCode
@@ -69,6 +76,11 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            ndk {
+                // Native debug metadata is not needed in the distributed APK.
+                // Disabling it avoids a large memory spike during release builds.
+                debugSymbolLevel = "none"
+            }
             if (isRelease) {
                 signingConfig = signingConfigs.getByName("release")
             } else {
@@ -102,7 +114,4 @@ dependencies {
     implementation(libs.smali.dexlib2) {
         exclude(group = "com.google.guava", module = "guava")
     }
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.crashlytics.ndk)
-    implementation(libs.firebase.analytics)
 }

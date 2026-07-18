@@ -61,6 +61,14 @@ class App {
         false;
   }
 
+  Future<bool> installApk(String path) async {
+    if (!Platform.isAndroid) return false;
+    return await methodChannel.invokeMethod<bool>('installApk', {
+          'path': path,
+        }) ??
+        false;
+  }
+
   Future<ImageProvider?> getPackageIcon(String packageName) async {
     final path = await methodChannel.invokeMethod<String>('getPackageIcon', {
       'packageName': packageName,

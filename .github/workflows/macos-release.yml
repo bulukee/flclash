@@ -1,0 +1,90 @@
+name: Salmon macOS Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.44.4'
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-latest
+          - arch: x64
+            os: macos-15-intel
+
+    steps:
+      - name: Checkout source and core
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache-dependency-path: core/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: master
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Select Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          XCODE_PATH="$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)"
+          sudo xcode-select -s "$XCODE_PATH"
+          xcodebuild -version
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter config --enable-macos-desktop
+          flutter pub get
+
+      - name: Build DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          dart setup.dart macos --env stable --targets dmg -v
+
+      - name: Normalize release filename and checksum
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^version:[[:space:]]*\([^+]*\).*/\1/p' pubspec.yaml | head -n 1)"
+          SOURCE="$(find dist build -type f -name '*.dmg' -print 2>/dev/null | sort | tail -n 1)"
+          if [[ -z "${SOURCE:-}" ]]; then
+            echo "No DMG was generated." >&2
+            exit 1
+          fi
+          mkdir -p release
+          FINAL="release/Salmon-macOS-${{ matrix.arch }}-${VERSION}.dmg"
+          cp -f "$SOURCE" "$FINAL"
+          shasum -a 256 "$FINAL" | tee "$FINAL.sha256"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Upload macOS release
+        uses: actions/upload-artifact@v4
+        with:
+          name: Salmon-macOS-${{ matrix.arch }}-${{ steps.release.outputs.version }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+

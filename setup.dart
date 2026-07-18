@@ -194,16 +194,37 @@ Future<int> _package(
   );
 
   process.stdout.listen((data) {
-    stdout.write(utf8.decode(data));
+    // Windows build tools may mix UTF-8 output with the active OEM/GBK code
+    // page. Never let a diagnostic byte crash the whole packaging process.
+    stdout.write(utf8.decode(data, allowMalformed: true));
   });
   process.stderr.listen((data) {
-    stderr.write(utf8.decode(data));
+    stderr.write(utf8.decode(data, allowMalformed: true));
   });
   final exitCode = await process.exitCode;
   return exitCode;
 }
 
 Future<String?> _buildGoCore(String rootDir) async {
+  if (Platform.environment['SKIP_WINDOWS_CORE'] == 'true') {
+    final coreFile = File(
+      p.join(rootDir, 'libclash', 'windows', 'FlClashCore.exe'),
+    );
+    final helperFile = File(
+      p.join(rootDir, 'libclash', 'windows', 'FlClashHelperService.exe'),
+    );
+    final shaFile = File(p.join(rootDir, 'core_sha256.json'));
+    if (!coreFile.existsSync() ||
+        !helperFile.existsSync() ||
+        !shaFile.existsSync()) {
+      throw StateError(
+        'SKIP_WINDOWS_CORE is enabled, but a required prebuilt Windows core file is missing.',
+      );
+    }
+    final content =
+        jsonDecode(shaFile.readAsStringSync()) as Map<String, dynamic>;
+    return content['CORE_SHA256'] as String?;
+  }
   final buildToolDir = p.join(
     rootDir,
     'plugins',

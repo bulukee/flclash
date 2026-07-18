@@ -3,10 +3,11 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
-import 'package:fl_clash/views/proxies/common.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'common.dart';
 
 class ProxyCard extends StatelessWidget {
   final String groupName;
@@ -26,50 +27,30 @@ class ProxyCard extends StatelessWidget {
 
   Measure get measure => globalState.measure;
 
-  void _handleTestCurrentDelay() {
-    proxyDelayTest(proxy, testUrl);
-  }
-
-  Widget _buildDelayText() {
-    return SizedBox(
-      height: measure.labelSmallHeight,
-      child: Consumer(
-        builder: (context, ref, _) {
-          final delay = ref.watch(
-            delayProvider(proxyName: proxy.name, testUrl: testUrl),
-          );
-          return FadeThroughBox(
-            alignment: type == ProxyCardType.expand
-                ? Alignment.centerLeft
-                : Alignment.centerRight,
-            child: delay == 0 || delay == null
-                ? SizedBox(
-                    height: measure.labelSmallHeight,
-                    width: measure.labelSmallHeight,
-                    child: delay == 0
-                        ? const CircularProgressIndicator(strokeWidth: 2)
-                        : IconButton(
-                            icon: const Icon(Icons.bolt),
-                            iconSize: globalState.measure.labelSmallHeight,
-                            padding: EdgeInsets.zero,
-                            onPressed: _handleTestCurrentDelay,
-                          ),
-                  )
-                : GestureDetector(
-                    onTap: _handleTestCurrentDelay,
-                    child: Text(
-                      delay > 0 ? '$delay ms' : 'Timeout',
-                      style: context.textTheme.labelSmall?.copyWith(
-                        overflow: TextOverflow.ellipsis,
-                        color: utils.getDelayColor(delay),
-                      ),
-                    ),
-                  ),
-          );
-        },
-      ),
-    );
-  }
+  Widget _buildDelayText() => Consumer(
+    builder: (_, ref, _) {
+      final roundTrip = ref.watch(
+        delayProvider(proxyName: proxy.name, testUrl: testUrl),
+      );
+      final delay = estimatedOneWayDelay(roundTrip);
+      final text = delay == null
+          ? '--'
+          : delay == 0
+          ? '...'
+          : '$delay ms';
+      final color = delay == null || delay == 0
+          ? const Color(0xFF7B8798)
+          : delay < 200
+          ? const Color(0xFF43AF57)
+          : delay < 400
+          ? const Color(0xFFFF9800)
+          : const Color(0xFFFF5364);
+      return Text(
+        text,
+        style: TextStyle(color: color, fontWeight: FontWeight.w800),
+      );
+    },
+  );
 
   Widget _buildProxyNameText(BuildContext context) {
     if (type == ProxyCardType.min) {

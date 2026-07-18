@@ -22,6 +22,8 @@ mixin CoreInterface {
 
   Future<String> asyncTestDelay(String url, String proxyName);
 
+  Future<String> asyncTestGroupDelay(String url, String groupName);
+
   Future<String> updateConfig(UpdateParams updateParams);
 
   Future<String> setupConfig(SetupParams setupParams);
@@ -329,6 +331,21 @@ abstract class CoreHandlerInterface with CoreInterface {
           timeout: const Duration(seconds: 6),
         ) ??
         json.encode(Delay(name: proxyName, value: -1, url: url));
+  }
+
+  @override
+  Future<String> asyncTestGroupDelay(String url, String groupName) async {
+    final delayParams = {
+      'proxy-name': groupName,
+      'timeout': const Duration(seconds: 10).inMilliseconds,
+      'test-url': url,
+    };
+    return await _invoke<String>(
+          method: ActionMethod.asyncTestGroupDelay,
+          data: json.encode(delayParams),
+          timeout: const Duration(seconds: 12),
+        ) ??
+        '{}';
   }
 
   @override

@@ -13,6 +13,7 @@
         android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -31,7 +32,17 @@
         android:banner="@mipmap/ic_banner"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="FlClash">
+        android:label="三文鱼">
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.update_provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_file_paths" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
@@ -68,6 +79,14 @@
         </activity>
 
         <activity
+            android:name=".CustomerServiceActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="unspecified"
+            android:theme="@style/NormalTheme"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".TempActivity"
             android:excludeFromRecents="true"
             android:exported="true"
@@ -90,7 +109,7 @@
             android:name=".TileService"
             android:exported="true"
             android:icon="@drawable/ic"
-            android:label="FlClash"
+            android:label="三文鱼"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

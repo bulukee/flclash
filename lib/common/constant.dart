@@ -9,7 +9,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter/material.dart';
 
-const appName = 'FlClash';
+const appName = '三文鱼';
 const appHelperService = 'FlClashHelperService';
 const coreName = 'clash.meta';
 const browserUa =
@@ -60,7 +60,12 @@ const repository = 'chen08209/FlClash';
 const defaultExternalController = '127.0.0.1:9090';
 const maxMobileWidth = 600;
 const maxLaptopWidth = 840;
-const defaultTestUrl = 'https://www.gstatic.com/generate_204';
+// Match the lightweight HTTPS connectivity target commonly used by
+// Clash Verge Rev/Mihomo. HTTPS is more reliable than repeated HEAD requests
+// to an HTTP URL, which some providers redirect or hijack.
+// Match Clash Verge Rev's lightweight generate_204 probe. Keeping this as
+// HTTP avoids adding a TLS handshake to the value shown as node latency.
+const defaultTestUrl = 'http://cp.cloudflare.com/generate_204';
 final commonFilter = ImageFilter.blur(
   sigmaX: 5,
   sigmaY: 5,
@@ -102,7 +107,7 @@ const proxiesListStoreKey = PageStorageKey<String>('proxies_list');
 const toolsStoreKey = PageStorageKey<String>('tools');
 const profilesStoreKey = PageStorageKey<String>('profiles');
 
-const defaultPrimaryColor = 0XFFD8C0C3;
+const defaultPrimaryColor = 0xFF1565C0;
 
 double getWidgetHeight(num lines) {
   final space = 14.mAp;

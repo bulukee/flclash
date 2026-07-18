@@ -30,7 +30,9 @@ class Window {
     // kDebugMode ? Size(680, 580) :
     final WindowOptions windowOptions = WindowOptions(
       size: props.size,
-      minimumSize: const Size(380, 400),
+      minimumSize: system.isWindows
+          ? const Size(900, 620)
+          : const Size(380, 400),
     );
     if (!system.isMacOS || version > 10) {
       await windowManager.setTitleBarStyle(TitleBarStyle.hidden);

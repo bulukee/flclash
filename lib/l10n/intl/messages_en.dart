@@ -689,11 +689,11 @@ class MessageLookup extends MessageLookupByLibrary {
     "profileUrlNullValidationDesc": MessageLookupByLibrary.simpleMessage(
       "Please input the profile URL",
     ),
-    "profiles": MessageLookupByLibrary.simpleMessage("Profiles"),
+    "profiles": MessageLookupByLibrary.simpleMessage("Nodes"),
     "profilesSort": MessageLookupByLibrary.simpleMessage("Profiles sort"),
     "project": MessageLookupByLibrary.simpleMessage("Project"),
     "providers": MessageLookupByLibrary.simpleMessage("Providers"),
-    "proxies": MessageLookupByLibrary.simpleMessage("Proxies"),
+    "proxies": MessageLookupByLibrary.simpleMessage("Plans"),
     "proxiesEmpty": MessageLookupByLibrary.simpleMessage("Proxies is empty"),
     "proxyChains": MessageLookupByLibrary.simpleMessage("Proxy chains"),
     "proxyDetectedAbnormal": MessageLookupByLibrary.simpleMessage(
@@ -905,6 +905,59 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleProviders": MessageLookupByLibrary.simpleMessage("Rule providers"),
     "ruleSet": MessageLookupByLibrary.simpleMessage("Rule set"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("Rule target"),
+    "salmonBuyNow": MessageLookupByLibrary.simpleMessage("Buy"),
+    "salmonConnected": MessageLookupByLibrary.simpleMessage(
+      "Securely connected",
+    ),
+    "salmonDirectMode": MessageLookupByLibrary.simpleMessage("Direct"),
+    "salmonDisconnected": MessageLookupByLibrary.simpleMessage("Not connected"),
+    "salmonFrom": MessageLookupByLibrary.simpleMessage("From"),
+    "salmonGlobalMode": MessageLookupByLibrary.simpleMessage("Global"),
+    "salmonHomeTitle": MessageLookupByLibrary.simpleMessage("Salmon"),
+    "salmonLoading": MessageLookupByLibrary.simpleMessage(
+      "Loading your subscription...",
+    ),
+    "salmonLoggingIn": MessageLookupByLibrary.simpleMessage("Signing in..."),
+    "salmonLogin": MessageLookupByLibrary.simpleMessage("Sign in"),
+    "salmonLoginFailed": MessageLookupByLibrary.simpleMessage(
+      "Sign-in failed. Please check your account and network.",
+    ),
+    "salmonLoginSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Sign in to automatically load your subscription",
+    ),
+    "salmonMode": MessageLookupByLibrary.simpleMessage("Proxy mode"),
+    "salmonNoPlans": MessageLookupByLibrary.simpleMessage(
+      "No plans are available right now",
+    ),
+    "salmonNode": MessageLookupByLibrary.simpleMessage("Current node"),
+    "salmonPlan": MessageLookupByLibrary.simpleMessage("Network plan"),
+    "salmonPlans": MessageLookupByLibrary.simpleMessage("Plans"),
+    "salmonPlansSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Fast, stable and ready whenever you are",
+    ),
+    "salmonPlansTitle": MessageLookupByLibrary.simpleMessage(
+      "Choose your plan",
+    ),
+    "salmonRequiredField": MessageLookupByLibrary.simpleMessage(
+      "This field is required",
+    ),
+    "salmonRuleMode": MessageLookupByLibrary.simpleMessage("Rule"),
+    "salmonSelectNode": MessageLookupByLibrary.simpleMessage("Select node"),
+    "salmonTapConnect": MessageLookupByLibrary.simpleMessage(
+      "Tap to connect securely",
+    ),
+    "salmonTapDisconnect": MessageLookupByLibrary.simpleMessage(
+      "Tap to disconnect",
+    ),
+    "salmonTapToTest": MessageLookupByLibrary.simpleMessage(
+      "Tap to test latency",
+    ),
+    "salmonTestComplete": MessageLookupByLibrary.simpleMessage(
+      "Node latency test completed",
+    ),
+    "salmonTestLatency": MessageLookupByLibrary.simpleMessage("Node test"),
+    "salmonTesting": MessageLookupByLibrary.simpleMessage("Testing..."),
+    "salmonWelcome": MessageLookupByLibrary.simpleMessage("Welcome to Salmon"),
     "save": MessageLookupByLibrary.simpleMessage("Save"),
     "saveChanges": MessageLookupByLibrary.simpleMessage(
       "Do you want to save the changes?",
@@ -1006,7 +1059,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tip": MessageLookupByLibrary.simpleMessage("tip"),
     "toggle": MessageLookupByLibrary.simpleMessage("Toggle"),
     "tonalSpotScheme": MessageLookupByLibrary.simpleMessage("TonalSpot"),
-    "tools": MessageLookupByLibrary.simpleMessage("Tools"),
+    "tools": MessageLookupByLibrary.simpleMessage("Me"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Tproxy Port"),
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Traffic usage"),
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),

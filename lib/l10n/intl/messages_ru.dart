@@ -728,7 +728,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "profilesSort": MessageLookupByLibrary.simpleMessage("Сортировка профилей"),
     "project": MessageLookupByLibrary.simpleMessage("Проект"),
     "providers": MessageLookupByLibrary.simpleMessage("Провайдеры"),
-    "proxies": MessageLookupByLibrary.simpleMessage("Прокси"),
+    "proxies": MessageLookupByLibrary.simpleMessage("Тарифы"),
     "proxiesEmpty": MessageLookupByLibrary.simpleMessage("Список прокси пуст"),
     "proxyChains": MessageLookupByLibrary.simpleMessage("Цепочки прокси"),
     "proxyDetectedAbnormal": MessageLookupByLibrary.simpleMessage(
@@ -954,6 +954,63 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleProviders": MessageLookupByLibrary.simpleMessage("Провайдеры правил"),
     "ruleSet": MessageLookupByLibrary.simpleMessage("Набор правил"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("Цель правила"),
+    "salmonBuyNow": MessageLookupByLibrary.simpleMessage("Купить"),
+    "salmonConnected": MessageLookupByLibrary.simpleMessage(
+      "Безопасное подключение",
+    ),
+    "salmonDirectMode": MessageLookupByLibrary.simpleMessage("Прямой"),
+    "salmonDisconnected": MessageLookupByLibrary.simpleMessage("Не подключено"),
+    "salmonFrom": MessageLookupByLibrary.simpleMessage("От"),
+    "salmonGlobalMode": MessageLookupByLibrary.simpleMessage("Глобальный"),
+    "salmonHomeTitle": MessageLookupByLibrary.simpleMessage("Salmon"),
+    "salmonLoading": MessageLookupByLibrary.simpleMessage(
+      "Загрузка подписки...",
+    ),
+    "salmonLoggingIn": MessageLookupByLibrary.simpleMessage(
+      "Выполняется вход...",
+    ),
+    "salmonLogin": MessageLookupByLibrary.simpleMessage("Войти"),
+    "salmonLoginFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось войти. Проверьте аккаунт и сеть.",
+    ),
+    "salmonLoginSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Войдите, чтобы автоматически загрузить подписку",
+    ),
+    "salmonMode": MessageLookupByLibrary.simpleMessage("Режим прокси"),
+    "salmonNoPlans": MessageLookupByLibrary.simpleMessage(
+      "Нет доступных тарифов",
+    ),
+    "salmonNode": MessageLookupByLibrary.simpleMessage("Текущий узел"),
+    "salmonPlan": MessageLookupByLibrary.simpleMessage("Тарифный план"),
+    "salmonPlans": MessageLookupByLibrary.simpleMessage("Тарифы"),
+    "salmonPlansSubtitle": MessageLookupByLibrary.simpleMessage(
+      "Быстрая и стабильная сеть",
+    ),
+    "salmonPlansTitle": MessageLookupByLibrary.simpleMessage("Выберите тариф"),
+    "salmonRequiredField": MessageLookupByLibrary.simpleMessage(
+      "Обязательное поле",
+    ),
+    "salmonRuleMode": MessageLookupByLibrary.simpleMessage("Правила"),
+    "salmonSelectNode": MessageLookupByLibrary.simpleMessage("Выбрать узел"),
+    "salmonTapConnect": MessageLookupByLibrary.simpleMessage(
+      "Нажмите для подключения",
+    ),
+    "salmonTapDisconnect": MessageLookupByLibrary.simpleMessage(
+      "Нажмите для отключения",
+    ),
+    "salmonTapToTest": MessageLookupByLibrary.simpleMessage(
+      "Нажмите для проверки",
+    ),
+    "salmonTestComplete": MessageLookupByLibrary.simpleMessage(
+      "Проверка задержки завершена",
+    ),
+    "salmonTestLatency": MessageLookupByLibrary.simpleMessage(
+      "Проверка задержки",
+    ),
+    "salmonTesting": MessageLookupByLibrary.simpleMessage("Проверка..."),
+    "salmonWelcome": MessageLookupByLibrary.simpleMessage(
+      "Добро пожаловать в Salmon",
+    ),
     "save": MessageLookupByLibrary.simpleMessage("Сохранить"),
     "saveChanges": MessageLookupByLibrary.simpleMessage("Сохранить изменения?"),
     "script": MessageLookupByLibrary.simpleMessage("Скрипт"),
@@ -1063,7 +1120,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "tip": MessageLookupByLibrary.simpleMessage("подсказка"),
     "toggle": MessageLookupByLibrary.simpleMessage("Переключить"),
     "tonalSpotScheme": MessageLookupByLibrary.simpleMessage("Тональный акцент"),
-    "tools": MessageLookupByLibrary.simpleMessage("Инструменты"),
+    "tools": MessageLookupByLibrary.simpleMessage("Профиль"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Tproxy-порт"),
     "trafficUsage": MessageLookupByLibrary.simpleMessage(
       "Использование трафика",

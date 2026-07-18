@@ -3,8 +3,6 @@ package com.follow.clash.common
 
 import android.app.Application
 import android.util.Log
-import com.google.firebase.FirebaseApp
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 
@@ -36,12 +34,9 @@ object GlobalState : CoroutineScope by CoroutineScope(Dispatchers.Default) {
     }
 
     fun setCrashlytics(enable: Boolean) {
-        _application?.let {
-            FirebaseApp.initializeApp(it)
-            FirebaseCrashlytics.getInstance().isCrashlyticsCollectionEnabled = enable
-            if (enable) {
-                log("init crashlytics ${it.processName}")
-            }
-        }
+        // Crash reporting is intentionally disabled in the branded build.
+        // Keep this compatibility method because the Flutter bridge may still
+        // call it when restoring settings from older installations.
+        if (enable) log("crash reporting is unavailable in this build")
     }
 }
