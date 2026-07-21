@@ -1,19 +1,21 @@
 import 'dart:convert';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/services/salmon_profile_sync.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-class PurchaseView extends StatefulWidget {
+class PurchaseView extends ConsumerStatefulWidget {
   const PurchaseView({super.key});
 
   @override
-  State<PurchaseView> createState() => _PurchaseViewState();
+  ConsumerState<PurchaseView> createState() => _PurchaseViewState();
 }
 
-class _PurchaseViewState extends State<PurchaseView> {
+class _PurchaseViewState extends ConsumerState<PurchaseView> {
   late Future<List<Map<String, dynamic>>> _plans;
   late Future<List<Map<String, dynamic>>> _payments;
   bool _processing = false;
@@ -197,7 +199,13 @@ class _PurchaseViewState extends State<PurchaseView> {
       final data = '${checkout['data'] ?? ''}';
       if (!mounted || data.isEmpty) return;
       if (type == 1) {
-        await launchUrl(Uri.parse(data), mode: LaunchMode.inAppBrowserView);
+        final uri = Uri.parse(data);
+        await launchUrl(
+          uri,
+          mode: uri.scheme == 'http' || uri.scheme == 'https'
+              ? LaunchMode.inAppBrowserView
+              : LaunchMode.externalApplication,
+        );
       } else {
         await showDialog<void>(
           context: context,
@@ -227,6 +235,30 @@ class _PurchaseViewState extends State<PurchaseView> {
             ],
           ),
         );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('正在确认支付结果…')));
+      final completed = await salmonService.waitForOrderCompleted(tradeNo);
+      if (!mounted) return;
+      if (completed) {
+        final session = await salmonService.restore();
+        if (session != null && session.subscribeUrl.isNotEmpty) {
+          await syncSalmonProfile(ref, session.subscribeUrl);
+        }
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('支付成功，套餐已更新')));
+        setState(() {
+          _plans = _loadPlans(forceRefresh: true);
+          _payments = _loadPayments(forceRefresh: true);
+        });
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('暂未确认到账，可稍后在订单记录中查看')));
       }
     } catch (error) {
       if (mounted) {

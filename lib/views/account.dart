@@ -6,6 +6,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:fl_clash/views/config/dns.dart';
+import 'package:fl_clash/views/config/general.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -366,6 +367,7 @@ class _AccountViewState extends State<AccountView> {
   @override
   void initState() {
     super.initState();
+    salmonService.membershipRevision.addListener(_onMembershipChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       switch (widget.initialAction) {
@@ -377,6 +379,21 @@ class _AccountViewState extends State<AccountView> {
           break;
       }
     });
+  }
+
+  void _onMembershipChanged() {
+    if (!mounted) return;
+    setState(() {
+      _data = salmonAccountCache == null
+          ? _load()
+          : Future.value(salmonAccountCache!);
+    });
+  }
+
+  @override
+  void dispose() {
+    salmonService.membershipRevision.removeListener(_onMembershipChanged);
+    super.dispose();
   }
 
   Future<Map<String, dynamic>> _load() async {
@@ -782,8 +799,8 @@ class _AccountViewState extends State<AccountView> {
                     _Menu(
                       icon: Icons.settings_rounded,
                       title: '设置',
-                      subtitle: 'DNS 覆写与防污染设置',
-                      onTap: () => _open(const DnsOverridePage()),
+                      subtitle: '代理端口、DNS 覆写与网络设置',
+                      onTap: () => _open(const SalmonSettingsPage()),
                     ),
                   ],
                 ),
@@ -801,6 +818,50 @@ class _AccountViewState extends State<AccountView> {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class SalmonSettingsPage extends StatelessWidget {
+  const SalmonSettingsPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return CommonScaffold(
+      title: '设置',
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        children: [
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                const PortItem(),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.dns_rounded),
+                  title: const Text('DNS 覆写'),
+                  subtitle: const Text('自定义 DNS 与防污染设置'),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const DnsOverridePage(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              'Windows 与 macOS 默认使用混合代理端口 7890。修改后请断开并重新连接；端口范围为 1024–49151。',
+              style: TextStyle(color: Color(0xFF7185A3), height: 1.5),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -866,7 +927,13 @@ class _OrdersPageState extends State<OrdersPage> {
       final value = '${checkout['data'] ?? ''}';
       if (!mounted || value.isEmpty) return;
       if (type == 1) {
-        await launchUrl(Uri.parse(value), mode: LaunchMode.inAppBrowserView);
+        final uri = Uri.parse(value);
+        await launchUrl(
+          uri,
+          mode: uri.scheme == 'http' || uri.scheme == 'https'
+              ? LaunchMode.inAppBrowserView
+              : LaunchMode.externalApplication,
+        );
       } else {
         await showDialog<void>(
           context: context,
@@ -887,7 +954,18 @@ class _OrdersPageState extends State<OrdersPage> {
           ),
         );
       }
-      setState(() => data = salmonService.fetchOrders());
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('正在确认支付结果…')));
+      final completed = await salmonService.waitForOrderCompleted(
+        '${order['trade_no']}',
+      );
+      if (!mounted) return;
+      setState(() => data = salmonService.fetchOrders(forceRefresh: true));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(completed ? '支付成功，套餐已更新' : '暂未确认到账，请稍后刷新订单')),
+      );
     } catch (error) {
       if (mounted)
         ScaffoldMessenger.of(

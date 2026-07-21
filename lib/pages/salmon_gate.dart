@@ -2,6 +2,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/pages/salmon_auth_pages.dart';
+import 'package:fl_clash/services/salmon_profile_sync.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -55,7 +56,6 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
       // A valid authentication session is sufficient to enter the app.
       // Subscription/profile availability is a separate concern: new users
       // without a plan must still be able to visit the store and account pages.
-      _setStatus(_SalmonGateStatus.ready);
       Profile? cachedProfile;
       for (final profile in ref.read(profilesProvider)) {
         if (profile.label == salmonProfileLabel) {
@@ -63,21 +63,26 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
           break;
         }
       }
-      if (cachedProfile != null) {
+      var synced = false;
+      if (session.subscribeUrl.isNotEmpty) {
+        try {
+          await _syncProfile(session.subscribeUrl);
+          synced = true;
+        } catch (error) {
+          debugPrint('Subscription sync skipped: $error');
+        }
+      }
+      // Never expose a managed profile left by another account. The cached
+      // profile is only safe when it belongs to this exact subscription URL.
+      if (!synced &&
+          cachedProfile != null &&
+          cachedProfile.url == session.subscribeUrl) {
         ref.read(currentProfileIdProvider.notifier).value = cachedProfile.id;
         ref
             .read(setupActionProvider.notifier)
             .applyProfileDebounce(force: false, silence: true);
       }
-      if (session.subscribeUrl.isNotEmpty) {
-        Future<void>(() async {
-          try {
-            await _syncProfile(session.subscribeUrl);
-          } catch (error) {
-            debugPrint('Background subscription sync skipped: $error');
-          }
-        });
-      }
+      _setStatus(_SalmonGateStatus.ready);
     } catch (error) {
       debugPrint('Session restore failed: $error');
       _setStatus(_SalmonGateStatus.login);
@@ -96,16 +101,14 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
         password: _passwordController.text,
       );
       _passwordController.clear();
-      _setStatus(_SalmonGateStatus.ready);
       if (session.subscribeUrl.isNotEmpty) {
-        Future<void>(() async {
-          try {
-            await _syncProfile(session.subscribeUrl);
-          } catch (error) {
-            debugPrint('Post-login subscription sync skipped: $error');
-          }
-        });
+        try {
+          await _syncProfile(session.subscribeUrl);
+        } catch (error) {
+          debugPrint('Post-login subscription sync skipped: $error');
+        }
       }
+      _setStatus(_SalmonGateStatus.ready);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -171,27 +174,7 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
   }
 
   Future<void> _saveProfile(String subscribeUrl) async {
-    final profiles = ref.read(profilesProvider);
-    Profile? existingProfile;
-    for (final profile in profiles) {
-      if (profile.label == salmonProfileLabel) {
-        existingProfile = profile;
-        break;
-      }
-    }
-    final profile =
-        existingProfile?.copyWith(
-          label: salmonProfileLabel,
-          url: subscribeUrl,
-          autoUpdate: true,
-        ) ??
-        Profile.normal(label: salmonProfileLabel, url: subscribeUrl);
-    final updatedProfile = await profile.update();
-    ref.read(profilesActionProvider.notifier).putProfile(updatedProfile);
-    ref.read(currentProfileIdProvider.notifier).value = updatedProfile.id;
-    ref
-        .read(setupActionProvider.notifier)
-        .applyProfileDebounce(force: true, silence: true);
+    await syncSalmonProfile(ref, subscribeUrl);
   }
 
   String _friendlyError(Object error) {

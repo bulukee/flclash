@@ -149,6 +149,7 @@ class SalmonService {
 
   final Dio _dio;
   final ValueNotifier<int> sessionRevision = ValueNotifier<int>(0);
+  final ValueNotifier<int> membershipRevision = ValueNotifier<int>(0);
 
   SalmonService({Dio? dio})
     : _dio =
@@ -1014,6 +1015,89 @@ class SalmonService {
     final value = root is Map && root['data'] is Map ? root['data'] : root;
     if (value is! Map) throw StateError(_responseMessage(root));
     return Map<String, dynamic>.from(value);
+  }
+
+  /// Wait until V2Board marks an order as completed (status 3).
+  Future<bool> waitForOrderCompleted(
+    String tradeNo, {
+    Duration timeout = const Duration(minutes: 3),
+    Duration interval = const Duration(seconds: 3),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      try {
+        final orders = await fetchOrders(forceRefresh: true);
+        final matches = orders.where(
+          (item) => '${item['trade_no'] ?? ''}' == tradeNo,
+        );
+        if (matches.isNotEmpty) {
+          final status = int.tryParse('${matches.first['status']}') ?? -1;
+          if (status == 3) {
+            await refreshMembershipData();
+            return true;
+          }
+          if (status == 2) return false;
+        }
+      } catch (_) {
+        // Temporary network failures should not stop payment confirmation.
+      }
+      await Future<void>.delayed(interval);
+    }
+    return false;
+  }
+
+  /// Clear stale membership data and immediately fetch the paid plan.
+  Future<Map<String, dynamic>> refreshMembershipData() async {
+    await _removeDataCache(_userDataCacheKey);
+    await _removeDataCache(_subscribeDataCacheKey);
+    await _removeDataCache(_ordersDataCacheKey);
+    salmonAccountCache = null;
+    salmonAccountCacheAt = null;
+    final values = await Future.wait([
+      fetchUserInfo(forceRefresh: true),
+      fetchSubscribeInfo(forceRefresh: true),
+      fetchOrders(forceRefresh: true),
+      fetchPlans(),
+    ]);
+    final user = Map<String, dynamic>.from(values[0] as Map);
+    final subscription = Map<String, dynamic>.from(values[1] as Map);
+    final plans = values[3] as List<Map<String, dynamic>>;
+    final planId = int.tryParse(
+      '${subscription['plan_id'] ?? user['plan_id'] ?? ''}',
+    );
+    Map<String, dynamic>? currentPlan;
+    for (final plan in plans) {
+      if (int.tryParse('${plan['id']}') == planId) {
+        currentPlan = plan;
+        break;
+      }
+    }
+    final userPlan = user['plan'];
+    final result = <String, dynamic>{
+      ...user,
+      ...subscription,
+      'plan_name':
+          currentPlan?['name']?.toString() ??
+          (userPlan is Map ? userPlan['name']?.toString() : null) ??
+          user['plan_name']?.toString() ??
+          subscription['plan_name']?.toString() ??
+          (planId != null && planId > 0 ? '已有套餐' : '暂无套餐'),
+      'plan_quota_gb': currentPlan?['transfer_enable'],
+    };
+    salmonAccountCache = result;
+    salmonAccountCacheAt = DateTime.now();
+
+    final subscribeUrl = subscription['subscribe_url']?.toString() ?? '';
+    if (subscribeUrl.isNotEmpty) {
+      final preferences = await SharedPreferences.getInstance();
+      final baseUrl = preferences.getString(_baseUrlKey);
+      final resolved = baseUrl == null || Uri.parse(subscribeUrl).hasScheme
+          ? subscribeUrl
+          : Uri.parse(baseUrl).resolve(subscribeUrl).toString();
+      await preferences.setString(_subscribeUrlKey, resolved);
+    }
+    membershipRevision.value++;
+    return result;
   }
 
   Future<dynamic> _authenticatedRequest(

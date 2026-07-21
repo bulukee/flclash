@@ -56,6 +56,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   @override
   void initState() {
     super.initState();
+    salmonService.membershipRevision.addListener(_onMembershipChanged);
     restoreDelayCache();
     _account = salmonAccountCache == null
         ? _loadAccount()
@@ -83,6 +84,22 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         _refreshNotices();
       }
     });
+  }
+
+  void _onMembershipChanged() {
+    if (!mounted) return;
+    setState(() {
+      _account = salmonAccountCache == null
+          ? _loadAccount()
+          : Future.value(salmonAccountCache!);
+      _planWarningShown = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    salmonService.membershipRevision.removeListener(_onMembershipChanged);
+    super.dispose();
   }
 
   Future<void> _showPlanWarningIfNeeded() async {
