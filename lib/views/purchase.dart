@@ -28,6 +28,7 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
     'two_year_price': '两年',
     'three_year_price': '三年',
     'onetime_price': '一次性',
+    'reset_price': '重置流量',
   };
 
   @override
@@ -120,69 +121,162 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
       ).showSnackBar(const SnackBar(content: Text('暂无可用支付方式')));
       return;
     }
+    final couponController = TextEditingController();
+    String? appliedCoupon;
+    String? couponMessage;
+    var checkingCoupon = false;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 2, 18, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '支付方式',
-                style: context.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 14),
-              ...payments.map(
-                (payment) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: ListTile(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              2,
+              18,
+              24 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '支付方式',
+                    style: context.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
                     ),
-                    tileColor: context.colorScheme.surfaceContainerLow,
-                    leading: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: context.colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Icon(
-                        Icons.account_balance_wallet_rounded,
-                        color: context.colorScheme.primary,
-                      ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: couponController,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      labelText: '优惠码（选填）',
+                      hintText: '输入优惠码后点击使用',
+                      prefixIcon: const Icon(Icons.discount_rounded),
+                      suffixIcon: checkingCoupon
+                          ? const Padding(
+                              padding: EdgeInsets.all(13),
+                              child: SizedBox.square(
+                                dimension: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : TextButton(
+                              onPressed: () async {
+                                final code = couponController.text.trim();
+                                if (code.isEmpty) {
+                                  setSheetState(() => couponMessage = '请输入优惠码');
+                                  return;
+                                }
+                                setSheetState(() {
+                                  checkingCoupon = true;
+                                  couponMessage = null;
+                                });
+                                try {
+                                  await salmonService.checkCoupon(
+                                    planId: (plan['id'] as num).toInt(),
+                                    code: code,
+                                  );
+                                  setSheetState(() {
+                                    appliedCoupon = code;
+                                    couponMessage = '优惠码已使用';
+                                  });
+                                } catch (error) {
+                                  setSheetState(() {
+                                    appliedCoupon = null;
+                                    couponMessage = salmonFriendlyError(
+                                      error,
+                                      fallback: '优惠码不可用',
+                                    );
+                                  });
+                                } finally {
+                                  if (sheetContext.mounted) {
+                                    setSheetState(() => checkingCoupon = false);
+                                  }
+                                }
+                              },
+                              child: const Text('使用'),
+                            ),
                     ),
-                    title: Text(
-                      '${payment['name'] ?? payment['payment'] ?? '在线支付'}',
-                    ),
-                    trailing: const Icon(Icons.chevron_right_rounded),
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      _checkout(
-                        planId: (plan['id'] as num).toInt(),
-                        cycle: cycle,
-                        method: (payment['id'] as num).toInt(),
-                      );
+                    onChanged: (_) {
+                      if (appliedCoupon != null) {
+                        setSheetState(() {
+                          appliedCoupon = null;
+                          couponMessage = null;
+                        });
+                      }
                     },
                   ),
-                ),
+                  if (couponMessage != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      couponMessage!,
+                      style: TextStyle(
+                        color: appliedCoupon == null
+                            ? context.colorScheme.error
+                            : const Color(0xFF1F9D62),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  ...payments.map(
+                    (payment) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        tileColor: context.colorScheme.surfaceContainerLow,
+                        leading: Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: context.colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            Icons.account_balance_wallet_rounded,
+                            color: context.colorScheme.primary,
+                          ),
+                        ),
+                        title: Text(
+                          '${payment['name'] ?? payment['payment'] ?? '在线支付'}',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () {
+                          Navigator.pop(sheetContext);
+                          _checkout(
+                            planId: (plan['id'] as num).toInt(),
+                            cycle: cycle,
+                            method: (payment['id'] as num).toInt(),
+                            couponCode: appliedCoupon,
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
     );
+    couponController.dispose();
   }
 
   Future<void> _checkout({
     required int planId,
     required String cycle,
     required int method,
+    String? couponCode,
   }) async {
     if (_processing) return;
     setState(() => _processing = true);
@@ -190,6 +284,7 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
       final tradeNo = await salmonService.createOrder(
         planId: planId,
         cycle: cycle,
+        couponCode: couponCode,
       );
       final checkout = await salmonService.checkoutOrder(
         tradeNo: tradeNo,

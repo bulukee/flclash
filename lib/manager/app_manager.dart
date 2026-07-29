@@ -311,7 +311,32 @@ class _DesktopSidebarStatus extends ConsumerStatefulWidget {
 }
 
 class _DesktopSidebarStatusState extends ConsumerState<_DesktopSidebarStatus> {
-  late final Future<Map<String, dynamic>> _account = _loadAccount();
+  late Future<Map<String, dynamic>> _account;
+
+  @override
+  void initState() {
+    super.initState();
+    _account = _loadAccount();
+    salmonService.membershipRevision.addListener(_handleMembershipChanged);
+  }
+
+  void _handleMembershipChanged() {
+    if (!mounted) return;
+    final cached = salmonAccountCache;
+    setState(() {
+      _account = cached == null
+          ? _loadAccount()
+          : Future<Map<String, dynamic>>.value(
+              Map<String, dynamic>.from(cached),
+            );
+    });
+  }
+
+  @override
+  void dispose() {
+    salmonService.membershipRevision.removeListener(_handleMembershipChanged);
+    super.dispose();
+  }
 
   Future<Map<String, dynamic>> _loadAccount() async {
     try {

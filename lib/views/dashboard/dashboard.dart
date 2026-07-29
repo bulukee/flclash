@@ -7,6 +7,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/proxies/common.dart';
+import 'package:fl_clash/views/purchase.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -116,8 +117,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       final expired =
           '${data['plan_name'] ?? ''}' == '暂无套餐' ||
           _isExpired(data['expired_at'] ?? data['expire']);
-      final exhausted = !expired && total > 0 && used >= total;
-      if ((!expired && !exhausted) || !mounted) return;
+      // A low-balance threshold is only a reminder; it must not block
+      // connecting while any traffic remains.
+      if (!expired || !mounted) return;
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
@@ -225,9 +227,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
           (num.tryParse('${data['d'] ?? 0}') ?? 0);
       final expired =
           '${data['plan_name'] ?? ''}' == '暂无套餐' || _isExpired(rawExpiry);
-      final exhausted = total > 0 && used >= total;
-      final unavailable = expired || exhausted;
-      if (unavailable) {
+      // Do not block at the 10% reminder threshold. Only an expired plan
+      // prevents starting the tunnel.
+      if (expired) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -733,6 +735,55 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                               mode: mode,
                               onTap: () => _showModeSelector(mode),
                             ),
+                            FutureBuilder<Map<String, dynamic>>(
+                              future: _account,
+                              builder: (_, snapshot) {
+                                final data = snapshot.data ?? const {};
+                                var total =
+                                    num.tryParse(
+                                      '${data['transfer_enable'] ?? 0}',
+                                    ) ??
+                                    0;
+                                final quotaGb =
+                                    num.tryParse(
+                                      '${data['plan_quota_gb'] ?? 0}',
+                                    ) ??
+                                    0;
+                                if (quotaGb > 0) {
+                                  total = quotaGb * 1024 * 1024 * 1024;
+                                }
+                                final used =
+                                    (num.tryParse('${data['u'] ?? 0}') ?? 0) +
+                                    (num.tryParse('${data['d'] ?? 0}') ?? 0);
+                                final expired =
+                                    '${data['plan_name'] ?? ''}' == '暂无套餐' ||
+                                    _isExpired(
+                                      data['expired_at'] ?? data['expire'],
+                                    );
+                                final remaining = expired
+                                    ? 0
+                                    : (total - used).clamp(0, total);
+                                if (expired ||
+                                    total <= 0 ||
+                                    remaining > total * .1) {
+                                  return const SizedBox.shrink();
+                                }
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 12),
+                                  child: FilledButton.tonalIcon(
+                                    onPressed: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => const PurchaseView(),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.restart_alt_rounded),
+                                    label: const Text('剩余流量不足 10%，立即重置'),
+                                  ),
+                                );
+                              },
+                            ),
                           ],
                         ),
                       ),
@@ -815,6 +866,8 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                           final remaining = expired
                               ? 0
                               : (total - used).clamp(0, total);
+                          final lowTraffic =
+                              !expired && total > 0 && remaining <= total * .1;
                           if (desktop) return const SizedBox.shrink();
                           return Align(
                             alignment: desktop
@@ -843,6 +896,14 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                                     expiry: expired
                                         ? '套餐已过期'
                                         : _expiry(rawExpiry),
+                                    showResetTraffic: lowTraffic,
+                                    onResetTraffic: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => const PurchaseView(),
+                                        ),
+                                      );
+                                    },
                                   ),
                                 ],
                               ),
@@ -1435,11 +1496,15 @@ class _PlanSummary extends StatelessWidget {
   final String plan;
   final String remaining;
   final String expiry;
+  final bool showResetTraffic;
+  final VoidCallback onResetTraffic;
 
   const _PlanSummary({
     required this.plan,
     required this.remaining,
     required this.expiry,
+    required this.showResetTraffic,
+    required this.onResetTraffic,
   });
 
   @override
@@ -1498,6 +1563,14 @@ class _PlanSummary extends StatelessWidget {
                   fontWeight: FontWeight.w900,
                 ),
               ),
+              if (showResetTraffic) ...[
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  onPressed: onResetTraffic,
+                  icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                  label: const Text('重置流量'),
+                ),
+              ],
             ],
           ),
         ),

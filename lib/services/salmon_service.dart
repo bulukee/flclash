@@ -969,16 +969,26 @@ class SalmonService {
   Future<String> createOrder({
     required int planId,
     required String cycle,
+    String? couponCode,
   }) async {
     dynamic data;
+    final normalizedCoupon = couponCode?.trim() ?? '';
+    final body = <String, dynamic>{
+      'plan_id': planId,
+      'cycle': cycle,
+      'period': cycle,
+      if (normalizedCoupon.isNotEmpty) 'coupon_code': normalizedCoupon,
+    };
     try {
       data = await _authenticatedRequest(
         'user/order/save',
         method: 'POST',
-        body: {'plan_id': planId, 'cycle': cycle, 'period': cycle},
+        body: body,
       );
     } on DioException catch (error) {
-      final pending = await _matchingPendingOrder(planId, cycle);
+      final pending = normalizedCoupon.isEmpty
+          ? await _matchingPendingOrder(planId, cycle)
+          : null;
       if (pending != null) return pending;
       throw StateError(_dioMessage(error));
     }
@@ -986,6 +996,21 @@ class SalmonService {
     if (tradeNo.isEmpty) throw StateError('Unable to create order');
     await _removeDataCache(_ordersDataCacheKey);
     return tradeNo;
+  }
+
+  Future<Map<String, dynamic>> checkCoupon({
+    required int planId,
+    required String code,
+  }) async {
+    final normalized = code.trim();
+    if (normalized.isEmpty) throw StateError('请输入优惠码');
+    final data = await _authenticatedRequest(
+      'user/coupon/check',
+      method: 'POST',
+      body: {'plan_id': planId, 'code': normalized},
+    );
+    if (data is Map) return Map<String, dynamic>.from(data);
+    return <String, dynamic>{'valid': true};
   }
 
   Future<Map<String, dynamic>> checkoutOrder({
@@ -1033,7 +1058,16 @@ class SalmonService {
         if (matches.isNotEmpty) {
           final status = int.tryParse('${matches.first['status']}') ?? -1;
           if (status == 3) {
-            await refreshMembershipData();
+            // V2Board may mark the order paid a moment before the user and
+            // subscription endpoints expose the new quota. Give the server
+            // a short propagation window and refresh again.
+            await Future<void>.delayed(const Duration(seconds: 2));
+            for (var attempt = 0; attempt < 3; attempt++) {
+              await refreshMembershipData();
+              if (attempt < 2) {
+                await Future<void>.delayed(const Duration(seconds: 2));
+              }
+            }
             return true;
           }
           if (status == 2) return false;

@@ -823,8 +823,67 @@ class _AccountViewState extends State<AccountView> {
   }
 }
 
-class SalmonSettingsPage extends StatelessWidget {
+class SalmonSettingsPage extends StatefulWidget {
   const SalmonSettingsPage({super.key});
+
+  @override
+  State<SalmonSettingsPage> createState() => _SalmonSettingsPageState();
+}
+
+class _SalmonSettingsPageState extends State<SalmonSettingsPage> {
+  bool _autoStartEnabled = false;
+  bool _autoStartLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAutoStartStatus();
+  }
+
+  Future<void> _loadAutoStartStatus() async {
+    if (!system.isDesktop || autoLaunch == null) {
+      if (mounted) {
+        setState(() => _autoStartLoading = false);
+      }
+      return;
+    }
+    try {
+      final enabled = await autoLaunch!.isEnable;
+      if (!mounted) return;
+      setState(() {
+        _autoStartEnabled = enabled;
+        _autoStartLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _autoStartLoading = false);
+    }
+  }
+
+  Future<void> _setAutoStart(bool enabled) async {
+    if (_autoStartLoading || autoLaunch == null) return;
+    setState(() => _autoStartLoading = true);
+    try {
+      final success = enabled
+          ? await autoLaunch!.enable()
+          : await autoLaunch!.disable();
+      final actual = await autoLaunch!.isEnable;
+      if (!mounted) return;
+      setState(() {
+        _autoStartEnabled = actual;
+        _autoStartLoading = false;
+      });
+      if (!success || actual != enabled) {
+        throw StateError('startup setting was not applied');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _autoStartLoading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('开机自动启动设置失败，请稍后重试')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -839,6 +898,20 @@ class SalmonSettingsPage extends StatelessWidget {
               children: [
                 const PortItem(),
                 const Divider(height: 1),
+                if (system.isWindows || system.isMacOS) ...[
+                  SwitchListTile.adaptive(
+                    secondary: const Icon(Icons.power_settings_new_rounded),
+                    title: const Text('开机自动启动'),
+                    subtitle: Text(
+                      system.isWindows
+                          ? '登录 Windows 后自动启动三文鱼'
+                          : '登录 macOS 后自动启动三文鱼',
+                    ),
+                    value: _autoStartEnabled,
+                    onChanged: _autoStartLoading ? null : _setAutoStart,
+                  ),
+                  const Divider(height: 1),
+                ],
                 ListTile(
                   leading: const Icon(Icons.dns_rounded),
                   title: const Text('DNS 覆写'),
