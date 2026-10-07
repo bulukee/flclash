@@ -5,6 +5,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/services/salmon_service.dart';
+import 'package:fl_clash/services/salmon_traffic_reset.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/proxies/common.dart';
 import 'package:fl_clash/views/purchase.dart';
@@ -210,6 +211,17 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         originalPlanName ??
         (planId != null && planId > 0 ? '已有套餐' : '暂无套餐');
     subscription['plan_quota_gb'] = currentPlan?['transfer_enable'];
+    for (final key in [
+      'reset_at',
+      'reset_time',
+      'reset_date',
+      'reset_day',
+      'reset_traffic_method',
+    ]) {
+      if (subscription[key] == null && currentPlan?[key] != null) {
+        subscription[key] = currentPlan![key];
+      }
+    }
     salmonAccountCache = subscription;
     salmonAccountCacheAt = DateTime.now();
     return subscription;
@@ -529,12 +541,12 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                           ],
                         ),
                       ),
-                      IconButton.filledTonal(
-                        tooltip: '更新节点',
+                      FilledButton.tonalIcon(
                         onPressed: _updating
                             ? null
                             : () => _refreshNodeSheet(sheetContext),
                         icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('更新'),
                       ),
                       const SizedBox(width: 6),
                       FilledButton.icon(
@@ -896,6 +908,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                                     expiry: expired
                                         ? '套餐已过期'
                                         : _expiry(rawExpiry),
+                                    resetLabel: expired
+                                        ? null
+                                        : salmonTrafficResetSummary(data),
                                     showResetTraffic: lowTraffic,
                                     onResetTraffic: () {
                                       Navigator.of(context).push(
@@ -1065,10 +1080,10 @@ class _NodeTile extends ConsumerWidget {
         : '$displayDelay ms';
     final delayColor = displayDelay == null || displayDelay == 0
         ? context.colorScheme.onSurfaceVariant
-        : displayDelay < 200
+        : displayDelay < 350
         ? Colors.green
-        : displayDelay < 400
-        ? Colors.orange
+        : displayDelay < 600
+        ? Colors.amber.shade700
         : Colors.redAccent;
     return ListTile(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -1316,6 +1331,7 @@ class _ConnectionHero extends StatelessWidget {
                           Container(
                             width: 42,
                             height: 42,
+                            alignment: Alignment.center,
                             decoration: const BoxDecoration(
                               color: Color(0xFFDCE7FA),
                               shape: BoxShape.circle,
@@ -1496,6 +1512,7 @@ class _PlanSummary extends StatelessWidget {
   final String plan;
   final String remaining;
   final String expiry;
+  final String? resetLabel;
   final bool showResetTraffic;
   final VoidCallback onResetTraffic;
 
@@ -1503,6 +1520,7 @@ class _PlanSummary extends StatelessWidget {
     required this.plan,
     required this.remaining,
     required this.expiry,
+    required this.resetLabel,
     required this.showResetTraffic,
     required this.onResetTraffic,
   });
@@ -1593,6 +1611,17 @@ class _PlanSummary extends StatelessWidget {
                 fontWeight: FontWeight.w900,
               ),
             ),
+            if (resetLabel != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                resetLabel!,
+                style: const TextStyle(
+                  color: Color(0xFF405E86),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
           ],
         ),
       ],

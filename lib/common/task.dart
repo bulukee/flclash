@@ -191,33 +191,12 @@ Future<VM2<String, String>> _makeRealProfileTask(
   for (final host in realPatchConfig.hosts.entries) {
     rawConfig['hosts'][host.key] = host.value.splitByMultipleSeparators;
   }
-  if (rawConfig['dns'] == null) {
-    rawConfig['dns'] = {};
-  }
-  final isEnableDns = rawConfig['dns']['enable'] == true;
-  const systemDns = 'system://';
-  if (overrideDns || !isEnableDns) {
-    final dns = switch (!isEnableDns) {
-      true => realPatchConfig.dns.copyWith(
-        nameserver: [...realPatchConfig.dns.nameserver, systemDns],
-      ),
-      false => realPatchConfig.dns,
-    };
-    rawConfig['dns'] = dns.toJson();
-    rawConfig['dns']['nameserver-policy'] = {};
-    for (final entry in dns.nameserverPolicy.entries) {
-      rawConfig['dns']['nameserver-policy'][entry.key] =
-          entry.value.splitByMultipleSeparators;
-    }
-  }
-  if (appendSystemDns) {
-    final List<String> nameserver = List<String>.from(
-      rawConfig['dns']['nameserver'] ?? [],
-    );
-    if (!nameserver.contains(systemDns)) {
-      rawConfig['dns']['nameserver'] = [...nameserver, systemDns];
-    }
-  }
+  rawConfig['dns'] = resolveDnsConfig(
+    Map<String, dynamic>.from(rawConfig['dns'] as Map? ?? const {}),
+    realPatchConfig.dns,
+    overrideDns: overrideDns,
+    appendSystemDns: appendSystemDns,
+  );
   List<String> rules = [];
   if (data.rules.isEmpty) {
     if (rawConfig['rules'] != null) {
@@ -269,6 +248,31 @@ Future<VM2<String, String>> _makeRealProfileTask(
   rawConfig['rules'] = rules;
   final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
   return VM2(yaml, yaml.toMd5());
+}
+
+Map<String, dynamic> resolveDnsConfig(
+  Map<String, dynamic> rawDns,
+  Dns patchDns, {
+  required bool overrideDns,
+  required bool appendSystemDns,
+}) {
+  final dns = overrideDns || rawDns['enable'] != true
+      ? patchDns.toJson()
+      : Map<String, dynamic>.from(rawDns);
+  if (overrideDns || rawDns['enable'] != true) {
+    dns['nameserver-policy'] = {
+      for (final entry in patchDns.nameserverPolicy.entries)
+        entry.key: entry.value.splitByMultipleSeparators,
+    };
+  }
+  // The system resolver is an explicit opt-in, never an implicit fallback.
+  if (appendSystemDns) {
+    final nameserver = List<String>.from(dns['nameserver'] ?? const []);
+    if (!nameserver.contains('system://')) {
+      dns['nameserver'] = [...nameserver, 'system://'];
+    }
+  }
+  return dns;
 }
 
 Future<List<String>> shakingProfileTask(

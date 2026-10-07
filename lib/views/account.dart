@@ -5,6 +5,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/services/salmon_service.dart';
+import 'package:fl_clash/services/salmon_traffic_reset.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/views/config/general.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -396,11 +397,11 @@ class _AccountViewState extends State<AccountView> {
     super.dispose();
   }
 
-  Future<Map<String, dynamic>> _load() async {
+  Future<Map<String, dynamic>> _load({bool forceRefresh = false}) async {
     final values = await Future.wait([
-      salmonService.fetchUserInfo(),
-      salmonService.fetchSubscribeInfo(),
-      salmonService.fetchPlans(),
+      salmonService.fetchUserInfo(forceRefresh: forceRefresh),
+      salmonService.fetchSubscribeInfo(forceRefresh: forceRefresh),
+      salmonService.fetchPlans(forceRefresh: forceRefresh),
     ]);
     final user = Map<String, dynamic>.from(values[0] as Map);
     final subscription = Map<String, dynamic>.from(values[1] as Map);
@@ -420,12 +421,26 @@ class _AccountViewState extends State<AccountView> {
       ...subscription,
       'plan_name': plan.isEmpty ? fallbackPlanName : '${plan.first['name']}',
     };
+    if (plan.isNotEmpty) {
+      for (final key in [
+        'reset_at',
+        'reset_time',
+        'reset_date',
+        'reset_day',
+        'reset_traffic_method',
+      ]) {
+        if (result[key] == null && plan.first[key] != null) {
+          result[key] = plan.first[key];
+        }
+      }
+    }
     salmonAccountCache = result;
     salmonAccountCacheAt = DateTime.now();
     return result;
   }
 
-  void _reload() => setState(() => _data = _load());
+  void _reload({bool forceRefresh = true}) =>
+      setState(() => _data = _load(forceRefresh: forceRefresh));
   String _money(dynamic cents) =>
       '¥${((num.tryParse('${cents ?? 0}') ?? 0) / 100).toStringAsFixed(2)}';
   String _gb(num value) =>
@@ -437,11 +452,6 @@ class _AccountViewState extends State<AccountView> {
   }
 
   Future<void> _customerService() async {
-    if (system.isAndroid) {
-      const channel = MethodChannel('com.follow.clash/customer_service');
-      await channel.invokeMethod<void>('open');
-      return;
-    }
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -450,6 +460,7 @@ class _AccountViewState extends State<AccountView> {
             : const EmbeddedCustomerServicePage(),
       ),
     );
+    if (mounted) _reload();
   }
 
   Future<void> _redeem() async {
@@ -707,7 +718,10 @@ class _AccountViewState extends State<AccountView> {
         ],
       ),
     );
-    if (yes == true) await salmonService.clear();
+    if (yes == true) {
+      await EmbeddedCustomerServicePage.clearRetainedSession();
+      await salmonService.clear();
+    }
   }
 
   @override
@@ -1844,6 +1858,25 @@ class CustomerCenterPage extends StatelessWidget {
 class EmbeddedCustomerServicePage extends StatefulWidget {
   const EmbeddedCustomerServicePage({super.key});
 
+  static WebViewController? _retainedController;
+  static int? _retainedSessionRevision;
+
+  static Future<void> clearRetainedSession() async {
+    final controller = _retainedController;
+    _retainedController = null;
+    _retainedSessionRevision = null;
+    try {
+      await controller?.clearLocalStorage();
+    } catch (_) {
+      // A closed WebView should not block account logout.
+    }
+    try {
+      await WebViewCookieManager().clearCookies();
+    } catch (_) {
+      // The account is still cleared if WebView data is unavailable.
+    }
+  }
+
   @override
   State<EmbeddedCustomerServicePage> createState() =>
       _EmbeddedCustomerServicePageState();
@@ -1926,22 +1959,15 @@ class _EmbeddedCustomerServicePageState
   @override
   void initState() {
     super.initState();
-    controller = WebViewController()
+    final revision = salmonService.sessionRevision.value;
+    final retained =
+        EmbeddedCustomerServicePage._retainedSessionRevision == revision
+        ? EmbeddedCustomerServicePage._retainedController
+        : null;
+    controller = retained ?? WebViewController();
+    controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFFF8FAFE))
-      ..addJavaScriptChannel(
-        'ChatwootReady',
-        onMessageReceived: (_) {
-          readyTimer?.cancel();
-          if (mounted) {
-            setState(() {
-              chatReady = true;
-              failed = false;
-              progress = 100;
-            });
-          }
-        },
-      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (value) {
@@ -1994,7 +2020,14 @@ class _EmbeddedCustomerServicePageState
         return [Uri.file(image.path).toString()];
       });
     }
-    _loadDirectWidget();
+    if (retained == null) {
+      EmbeddedCustomerServicePage._retainedController = controller;
+      EmbeddedCustomerServicePage._retainedSessionRevision = revision;
+      _loadDirectWidget();
+    } else {
+      chatReady = true;
+      progress = 100;
+    }
   }
 
   @override
@@ -2179,7 +2212,6 @@ class _ChatwootPageState extends State<ChatwootPage> {
   int? conversationId;
   List<Map<String, dynamic>> messages = const [];
   String? error;
-  String? errorDetail;
   bool loading = true;
   bool sending = false;
   bool rebuildingSession = false;
@@ -2195,7 +2227,6 @@ class _ChatwootPageState extends State<ChatwootPage> {
       setState(() {
         loading = true;
         error = null;
-        errorDetail = null;
       });
     try {
       if (rebuild) await salmonService.clearChatwootSession();
@@ -2205,6 +2236,7 @@ class _ChatwootPageState extends State<ChatwootPage> {
       );
       sourceId = '${session['source_id']}';
       conversationId = session['conversation_id'] as int;
+      await Future<void>.delayed(const Duration(milliseconds: 450));
       await _refresh(rethrowOnError: true);
       refreshTimer?.cancel();
       refreshTimer = Timer.periodic(
@@ -2224,9 +2256,6 @@ class _ChatwootPageState extends State<ChatwootPage> {
       if (mounted)
         setState(() {
           error = '客服连接失败，请检查网络后重试';
-          errorDetail = message
-              .replaceFirst('DioException ', '')
-              .replaceFirst('Bad state: ', '');
           loading = false;
         });
     }
@@ -2345,19 +2374,6 @@ class _ChatwootPageState extends State<ChatwootPage> {
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-                  if (errorDetail != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      errorDetail!,
-                      maxLines: 4,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Color(0xFF7180A0),
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
                   const SizedBox(height: 18),
                   FilledButton.icon(
                     onPressed: _connect,
@@ -2653,6 +2669,12 @@ class _AccountCard extends StatelessWidget {
     return '$planName · 剩余 $days 天';
   }
 
+  String _resetTrafficTime() {
+    final date = salmonTrafficResetDate(data);
+    if (date == null) return '流量重置：${salmonTrafficResetSummary(data)}';
+    return '流量重置：${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(22),
@@ -2707,6 +2729,10 @@ class _AccountCard extends StatelessWidget {
                   Text(
                     _planStatus(),
                     style: const TextStyle(color: Colors.white70),
+                  ),
+                  Text(
+                    _resetTrafficTime(),
+                    style: const TextStyle(color: Colors.white60, fontSize: 12),
                   ),
                 ],
               ),

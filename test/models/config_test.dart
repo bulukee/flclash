@@ -187,8 +187,8 @@ void main() {
       expect(props.enable, true);
       expect(props.systemProxy, true);
       expect(props.ipv6, false);
-      expect(props.allowBypass, true);
-      expect(props.dnsHijacking, false);
+      expect(props.allowBypass, false);
+      expect(props.dnsHijacking, true);
       expect(props.accessControlProps.enable, false);
     });
 
@@ -352,7 +352,7 @@ void main() {
       const config = Config(themeProps: ThemeProps());
       final restored = roundTrip(() => config.toJson(), Config.fromJson);
       expect(restored.currentProfileId, null);
-      expect(restored.overrideDns, false);
+      expect(restored.overrideDns, true);
       expect(restored.networkProps.systemProxy, true);
       expect(restored.vpnProps.enable, true);
       expect(restored.hotKeyActions, isEmpty);

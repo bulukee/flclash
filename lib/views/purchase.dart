@@ -185,7 +185,7 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
                                   );
                                   setSheetState(() {
                                     appliedCoupon = code;
-                                    couponMessage = '优惠码已使用';
+                                    couponMessage = '优惠码已应用';
                                   });
                                 } catch (error) {
                                   setSheetState(() {

@@ -224,7 +224,7 @@ _Dns _$DnsFromJson(Map<String, dynamic> json) => _Dns(
   preferH3: json['prefer-h3'] as bool? ?? false,
   useHosts: json['use-hosts'] as bool? ?? true,
   useSystemHosts: json['use-system-hosts'] as bool? ?? true,
-  respectRules: json['respect-rules'] as bool? ?? false,
+  respectRules: json['respect-rules'] as bool? ?? true,
   ipv6: json['ipv6'] as bool? ?? false,
   defaultNameserver:
       (json['default-nameserver'] as List<dynamic>?)
@@ -244,11 +244,7 @@ _Dns _$DnsFromJson(Map<String, dynamic> json) => _Dns(
       (json['nameserver-policy'] as Map<String, dynamic>?)?.map(
         (k, e) => MapEntry(k, e as String),
       ) ??
-      const {
-        'www.baidu.com': '114.114.114.114',
-        '+.internal.crop.com': '10.0.0.1',
-        'geosite:cn': 'https://doh.pub/dns-query',
-      },
+      const {'geosite:cn': 'https://doh.pub/dns-query'},
   nameserver:
       (json['nameserver'] as List<dynamic>?)
           ?.map((e) => e as String)

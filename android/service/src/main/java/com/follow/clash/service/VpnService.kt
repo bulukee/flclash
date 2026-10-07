@@ -85,7 +85,7 @@ class VpnService : SystemVpnService(), IBaseService,
     val VpnOptions.dns
         get(): String {
             if (dnsHijacking) {
-                return NET_ANY
+                return if (ipv6) "$NET_ANY,$NET_ANY6" else NET_ANY
             }
             return buildString {
                 append(DNS)
@@ -148,6 +148,8 @@ class VpnService : SystemVpnService(), IBaseService,
             } else {
                 addRoute(NET_ANY, 0)
             }
+            // Keep the VPN's DNS endpoint reachable when private ranges are bypassed.
+            addRoute(DNS, 32)
             if (options.ipv6) {
                 try {
                     val cidr = IPV6_ADDRESS.toCIDR()
@@ -181,6 +183,7 @@ class VpnService : SystemVpnService(), IBaseService,
                 } catch (_: Exception) {
                     addRoute(NET_ANY6, 0)
                 }
+                addRoute(DNS6, 128)
             }
             addDnsServer(DNS)
             if (options.ipv6) {

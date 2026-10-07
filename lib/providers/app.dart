@@ -250,24 +250,56 @@ class Groups extends _$Groups with AutoDisposeNotifierMixin {
 
 @Riverpod(keepAlive: true)
 class DelayDataSource extends _$DelayDataSource with AutoDisposeNotifierMixin {
+  final Map<String, int> _testCounts = {};
+  final Map<String, List<Delay>> _pendingDelays = {};
+
   @override
   DelayMap build() {
     return {};
   }
 
-  void setDelay(Delay delay) {
-    if (state[delay.url]?[delay.name] != delay.value) {
-      final DelayMap newDelayMap = Map.from(state);
-      // Clone the nested map before changing it. Mutating the nested map from
-      // the previous state made Riverpod's selected old/new values identical,
-      // so node cards only refreshed after the page was reopened.
-      final nodeDelays = Map<String, int?>.from(
-        state[delay.url] ?? const <String, int?>{},
-      );
-      nodeDelays[delay.name] = delay.value;
-      newDelayMap[delay.url] = nodeDelays;
-      value = newDelayMap;
+  bool get isTesting => _testCounts.isNotEmpty;
+
+  void beginDelayTest(String proxyName) {
+    _testCounts.update(proxyName, (count) => count + 1, ifAbsent: () => 1);
+  }
+
+  void endDelayTest(String proxyName) {
+    final count = _testCounts[proxyName];
+    if (count == null) return;
+    if (count > 1) {
+      _testCounts[proxyName] = count - 1;
+      return;
     }
+    _testCounts.remove(proxyName);
+    _applyDelays(_pendingDelays.remove(proxyName) ?? const []);
+  }
+
+  void setDelay(Delay delay) {
+    if (_testCounts.containsKey(delay.name)) {
+      if (delay.value != null && delay.value! > 0) {
+        _pendingDelays.putIfAbsent(delay.name, () => []).add(delay);
+      }
+      return;
+    }
+    _applyDelays([delay]);
+  }
+
+  void _applyDelays(List<Delay> delays) {
+    final DelayMap next = Map.from(state);
+    final clonedUrls = <String>{};
+    var changed = false;
+    for (final delay in delays) {
+      if (next[delay.url]?[delay.name] == delay.value) continue;
+      if (clonedUrls.add(delay.url)) {
+        next[delay.url] = Map<String, int?>.from(
+          state[delay.url] ?? const <String, int?>{},
+        );
+      }
+      next[delay.url]![delay.name] = delay.value;
+      changed = true;
+    }
+    if (changed) value = next;
   }
 }
 

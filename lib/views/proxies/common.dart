@@ -134,41 +134,50 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
   if (state.proxyName.isEmpty) {
     return;
   }
+  final delaySource = ref.read(delayDataSourceProvider.notifier);
+  delaySource.beginDelayTest(state.proxyName);
   // Test every node exactly twice and keep the lowest successful RTT. The UI
   // converts this raw RTT to an explicitly labelled one-way estimate.
   int? measuredDelay;
-  for (var attempt = 0; attempt < _delayAttemptCount; attempt++) {
-    try {
-      final result = await coreController.getDelay(
-        defaultTestUrl,
-        state.proxyName,
-      );
-      final value = result.value;
-      if (value != null && value > 0) {
-        measuredDelay = measuredDelay == null || value < measuredDelay
-            ? value
-            : measuredDelay;
+  try {
+    for (var attempt = 0; attempt < _delayAttemptCount; attempt++) {
+      try {
+        final result = await coreController.getDelay(
+          defaultTestUrl,
+          state.proxyName,
+        );
+        final value = result.value;
+        if (value != null && value > 0) {
+          measuredDelay = measuredDelay == null || value < measuredDelay
+              ? value
+              : measuredDelay;
+        }
+      } catch (_) {
+        // A second attempt may still succeed; keep the last cached value if both
+        // attempts fail.
       }
-    } catch (_) {
-      // A second attempt may still succeed; keep the last cached value if both
-      // attempts fail.
     }
-  }
-  // A failed probe must not erase the last successful result. Apart from
-  // making the UI flicker back to `--`, clearing here also destroyed the
-  // persistent fallback when a group test returned only part of its nodes.
-  if (measuredDelay != null) {
-    final notifier = ref.read(proxiesActionProvider.notifier);
-    notifier.setDelay(
-      Delay(url: displayDelayUrl, name: state.proxyName, value: measuredDelay),
-    );
-    // Some profiles resolve an alias to the real proxy name while the node
-    // card still watches the original name. Keep both keys in sync.
-    if (proxy.name.isNotEmpty && proxy.name != state.proxyName) {
+    // Keep the last successful result if both probes fail. The measured
+    // minimum overrides any individual core event buffered during the test.
+    if (measuredDelay != null) {
+      final notifier = ref.read(proxiesActionProvider.notifier);
       notifier.setDelay(
-        Delay(url: displayDelayUrl, name: proxy.name, value: measuredDelay),
+        Delay(
+          url: displayDelayUrl,
+          name: state.proxyName,
+          value: measuredDelay,
+        ),
       );
+      if (proxy.name.isNotEmpty && proxy.name != state.proxyName) {
+        notifier.setDelay(
+          Delay(url: displayDelayUrl, name: proxy.name, value: measuredDelay),
+        );
+      }
     }
+  } finally {
+    delaySource.endDelayTest(state.proxyName);
+  }
+  if (measuredDelay != null && !delaySource.isTesting) {
     await _persistDelayCache();
   }
 }

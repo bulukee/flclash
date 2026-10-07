@@ -1,10 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:fl_clash/models/models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'constant.dart';
+
+const _dnsProtectionMigrationKey = 'salmon_dns_protection_v1';
+
+Config enableDnsProtection(Config config) => config.copyWith(
+  overrideDns: true,
+  networkProps: config.networkProps.copyWith(appendSystemDns: false),
+  vpnProps: config.vpnProps.copyWith(dnsHijacking: true, allowBypass: false),
+);
 
 class Preferences {
   static Preferences? _instance;
@@ -77,7 +86,17 @@ class Preferences {
     if (configMap == null) {
       return null;
     }
-    return Config.fromJson(configMap);
+    final config = Config.fromJson(configMap);
+    if (!Platform.isAndroid) return config;
+    final sharedPreferences = await sharedPreferencesCompleter.future;
+    if (sharedPreferences?.getBool(_dnsProtectionMigrationKey) == true) {
+      return config;
+    }
+    final protectedConfig = enableDnsProtection(config);
+    if (await saveConfig(protectedConfig)) {
+      await sharedPreferences?.setBool(_dnsProtectionMigrationKey, true);
+    }
+    return protectedConfig;
   }
 
   Future<bool> saveConfig(Config config) async {

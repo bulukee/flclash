@@ -124,6 +124,11 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
         selectedNode ??
         salmonCurrentNodeName ??
         (group == null ? '' : _selected(groups, group));
+    final current = nodes.any((node) => node.name == selected)
+        ? selected
+        : group == null
+        ? ''
+        : _selected(groups, group);
     if (!autoTested && group != null && nodes.isNotEmpty) {
       autoTested = true;
       WidgetsBinding.instance.addPostFrameCallback((_) => _test(group));
@@ -131,8 +136,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
     return CommonScaffold(
       title: '节点',
       actions: [
-        IconButton.filledTonal(
-          tooltip: '更新节点',
+        FilledButton.tonalIcon(
           onPressed: updating ? null : _update,
           icon: updating
               ? const SizedBox.square(
@@ -140,6 +144,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.refresh_rounded),
+          label: const Text('更新'),
         ),
         const SizedBox(width: 6),
         FilledButton.icon(
@@ -164,98 +169,88 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
         const SizedBox(width: 10),
       ],
       body: nodes.isEmpty
-          ? const Center(child: Text('暂无可用节点，请点击右上角更新'))
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 30),
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFDCE7FA), Color(0xFFE8EDFF)],
-                    ),
-                    borderRadius: BorderRadius.circular(27),
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 50,
-                        height: 50,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.travel_explore_rounded,
-                          color: Color(0xFF245CFF),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
+          ? const Center(child: Text('暂无可用线路，请点击更新'))
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = constraints.maxWidth < 520
+                    ? 2
+                    : constraints.maxWidth < 850
+                    ? 3
+                    : 4;
+                return CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              '选择一条喜欢的线路',
+                              '选择线路',
                               style: TextStyle(
                                 color: Color(0xFF29496F),
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${nodes.length} 个节点 · 延迟为单向估算',
-                              style: const TextStyle(
-                                color: Color(0xFF7185A3),
-                                fontSize: 12,
+                            if (current.isNotEmpty) ...[
+                              const SizedBox(height: 5),
+                              Text(
+                                '当前使用：$current',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF64748B),
+                                  fontSize: 13,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
-                      const Icon(
-                        Icons.favorite_rounded,
-                        color: Color(0xFF755BFF),
+                    ),
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 30),
+                      sliver: SliverGrid.builder(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                          mainAxisExtent: 124,
+                        ),
+                        itemCount: nodes.length,
+                        itemBuilder: (_, index) {
+                          final proxy = nodes[index];
+                          return _NodeRow(
+                            proxy: proxy,
+                            active: proxy.name == current,
+                            testUrl: group!.testUrl,
+                            onTap: () async {
+                              await ref
+                                  .read(proxiesActionProvider.notifier)
+                                  .changeProxy(
+                                    groupName: group.name,
+                                    proxyName: proxy.name,
+                                  );
+                              ref
+                                  .read(profilesActionProvider.notifier)
+                                  .updateCurrentSelectedMap(
+                                    group.name,
+                                    proxy.name,
+                                  );
+                              salmonCurrentNodeName = proxy.name;
+                              if (mounted) {
+                                setState(() => selectedNode = proxy.name);
+                              }
+                              await proxyDelayTest(proxy, group.testUrl);
+                            },
+                          );
+                        },
                       ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing: 9,
-                    mainAxisSpacing: 9,
-                    mainAxisExtent: 132,
-                  ),
-                  itemCount: nodes.length,
-                  itemBuilder: (_, index) {
-                    final proxy = nodes[index];
-                    return _NodeRow(
-                      proxy: proxy,
-                      active: proxy.name == selected,
-                      testUrl: group!.testUrl,
-                      onTap: () async {
-                        await ref
-                            .read(proxiesActionProvider.notifier)
-                            .changeProxy(
-                              groupName: group.name,
-                              proxyName: proxy.name,
-                            );
-                        ref
-                            .read(profilesActionProvider.notifier)
-                            .updateCurrentSelectedMap(group.name, proxy.name);
-                        salmonCurrentNodeName = proxy.name;
-                        if (mounted) setState(() => selectedNode = proxy.name);
-                        await proxyDelayTest(proxy, group.testUrl);
-                      },
-                    );
-                  },
-                ),
-              ],
+                    ),
+                  ],
+                );
+              },
             ),
     );
   }
@@ -305,22 +300,26 @@ class _NodeRow extends ConsumerWidget {
     final delay = ref.watch(
       delayProvider(proxyName: proxy.name, testUrl: testUrl),
     );
-    final displayDelay = estimatedOneWayDelay(delay);
-    final color = displayDelay == null || displayDelay == 0
+    final color = delay == null || delay == 0
         ? context.colorScheme.onSurfaceVariant
-        : displayDelay < 200
+        : delay < 350
         ? Colors.green
-        : displayDelay < 400
-        ? Colors.orange
+        : delay < 600
+        ? Colors.amber.shade700
         : Colors.redAccent;
     return Material(
       color: active
-          ? const Color(0xFFDCE7FA)
+          ? const Color(0xFFE7F0FF)
           : context.colorScheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(18),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(
+          color: active ? const Color(0xFF5B91D8) : const Color(0xFFE1E7F0),
+        ),
+      ),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.all(11),
           child: Column(
@@ -368,9 +367,7 @@ class _NodeRow extends ConsumerWidget {
                     ),
                   ),
                   Text(
-                    displayDelay == null || displayDelay == 0
-                        ? '--'
-                        : '$displayDelay ms',
+                    delay == null || delay == 0 ? '--' : '$delay ms',
                     style: TextStyle(
                       fontSize: 11,
                       color: color,

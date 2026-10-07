@@ -300,6 +300,58 @@ void main() {
 
       expect(identical(container.read(delayDataSourceProvider), state), isTrue);
     });
+
+    test('publishes each node only after its own test finishes', () {
+      final notifier = container.read(delayDataSourceProvider.notifier);
+      const url = 'https://test.example';
+      notifier.setDelay(const Delay(name: 'A', url: url, value: 98));
+      final previous = container.read(delayDataSourceProvider);
+      var updates = 0;
+      final subscription = container.listen(delayDataSourceProvider, (_, _) {
+        updates++;
+      });
+
+      notifier.beginDelayTest('A');
+      notifier.beginDelayTest('B');
+      notifier.setDelay(const Delay(name: 'A', url: url, value: 190));
+      notifier.setDelay(const Delay(name: 'B', url: url, value: 120));
+      notifier.setDelay(const Delay(name: 'A', url: url, value: 75));
+      notifier.setDelay(const Delay(name: 'B', url: url, value: 0));
+      expect(
+        identical(container.read(delayDataSourceProvider), previous),
+        isTrue,
+      );
+      notifier.endDelayTest('A');
+      expect(updates, 1);
+      expect(container.read(delayDataSourceProvider), {
+        url: {'A': 75},
+      });
+      notifier.endDelayTest('B');
+      expect(updates, 2);
+      expect(container.read(delayDataSourceProvider), {
+        url: {'A': 75, 'B': 120},
+      });
+      expect(previous[url], {'A': 98});
+      subscription.close();
+    });
+
+    test(
+      'overlapping tests of one node keep its intermediate values hidden',
+      () {
+        final notifier = container.read(delayDataSourceProvider.notifier);
+        const url = 'https://test.example';
+        notifier.beginDelayTest('A');
+        notifier.beginDelayTest('A');
+        notifier.setDelay(const Delay(name: 'A', url: url, value: 140));
+        notifier.endDelayTest('A');
+        expect(container.read(delayDataSourceProvider), isEmpty);
+        notifier.setDelay(const Delay(name: 'A', url: url, value: 75));
+        notifier.endDelayTest('A');
+        expect(container.read(delayDataSourceProvider), {
+          url: {'A': 75},
+        });
+      },
+    );
   });
 
   group('Loading provider', () {
