@@ -930,6 +930,9 @@ class SalmonService {
   Future<Map<String, dynamic>> prepareChatwoot(String email) async {
     final preferences = await SharedPreferences.getInstance();
     final normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.isEmpty) {
+      throw StateError('无法确认当前账号，请重新登录后联系客服');
+    }
     final storedEmail = preferences.getString(_chatEmailKey);
     if (storedEmail == null || storedEmail != normalizedEmail) {
       await clearChatwootSession();
@@ -1018,7 +1021,7 @@ class SalmonService {
       ),
     );
     dynamic data = response.data;
-    if (data is Map && data['payload'] is Map) data = data['payload'];
+    if (data is Map && data.containsKey('payload')) data = data['payload'];
     if (data is Map && data['data'] is Map) data = data['data'];
     if (data is Map) data = data['messages'];
     if (data is! List) return const [];
@@ -1043,6 +1046,29 @@ class SalmonService {
         'content': content,
         'echo_id': DateTime.now().microsecondsSinceEpoch.toString(),
       },
+    );
+  }
+
+  Future<void> sendChatwootAttachment(
+    String sourceId,
+    int conversationId,
+    String path,
+    String fileName,
+  ) async {
+    final data = FormData()
+      ..files.add(
+        MapEntry(
+          'attachments[]',
+          await MultipartFile.fromFile(path, filename: fileName),
+        ),
+      );
+    await _dio.post<dynamic>(
+      _chatMessagesUrl(sourceId, conversationId),
+      options: Options(
+        connectTimeout: const Duration(seconds: 20),
+        sendTimeout: const Duration(seconds: 60),
+      ),
+      data: data,
     );
   }
 

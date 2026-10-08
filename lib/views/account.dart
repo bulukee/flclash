@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -9,10 +10,12 @@ import 'package:fl_clash/services/salmon_traffic_reset.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/views/config/general.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as path;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
@@ -720,6 +723,7 @@ class _AccountViewState extends State<AccountView> {
     );
     if (yes == true) {
       await EmbeddedCustomerServicePage.clearRetainedSession();
+      await WindowsEmbeddedCustomerServicePage.clearRetainedSession();
       await salmonService.clear();
     }
   }
@@ -2106,6 +2110,45 @@ class _EmbeddedCustomerServicePageState
 class WindowsEmbeddedCustomerServicePage extends StatefulWidget {
   const WindowsEmbeddedCustomerServicePage({super.key});
 
+  static windows_webview.WebviewController? _retainedController;
+  static Future<void>? _lastDispose;
+
+  static Future<String> _userDataPath() async {
+    final home = await appPath.homeDirPath;
+    return path.join(home, 'customer-service-webview');
+  }
+
+  static Future<void> _prepareEnvironment() async {
+    await (_lastDispose ?? Future<void>.value());
+    await windows_webview.WebviewController.initializeEnvironment(
+      userDataPath: await _userDataPath(),
+    );
+  }
+
+  static Future<void> clearRetainedSession() async {
+    await (_lastDispose ?? Future<void>.value());
+    final controller = _retainedController;
+    _retainedController = null;
+    try {
+      if (controller != null) {
+        await controller.clearCookies();
+        await controller.executeScript('''
+        try {
+          localStorage.clear();
+          sessionStorage.clear();
+        } catch (_) {}
+      ''');
+      }
+    } catch (_) {
+      // Logout must continue even if the WebView2 profile is unavailable.
+    } finally {
+      if (controller != null) {
+        _lastDispose = controller.dispose();
+        await _lastDispose;
+      }
+    }
+  }
+
   @override
   State<WindowsEmbeddedCustomerServicePage> createState() =>
       _WindowsEmbeddedCustomerServicePageState();
@@ -2113,12 +2156,17 @@ class WindowsEmbeddedCustomerServicePage extends StatefulWidget {
 
 class _WindowsEmbeddedCustomerServicePageState
     extends State<WindowsEmbeddedCustomerServicePage> {
-  final controller = windows_webview.WebviewController();
+  late final windows_webview.WebviewController controller;
+  late final bool reusedController;
   Object? error;
 
   @override
   void initState() {
     super.initState();
+    final retained = WindowsEmbeddedCustomerServicePage._retainedController;
+    reusedController = retained != null;
+    controller = retained ?? windows_webview.WebviewController();
+    WindowsEmbeddedCustomerServicePage._retainedController = controller;
     _initialize();
   }
 
@@ -2129,11 +2177,16 @@ class _WindowsEmbeddedCustomerServicePageState
       if (version == null) {
         throw StateError('缺少 Microsoft Edge WebView2 Runtime');
       }
-      await controller.initialize();
+      if (!controller.value.isInitialized) {
+        await WindowsEmbeddedCustomerServicePage._prepareEnvironment();
+        await controller.initialize();
+      }
       await controller.setPopupWindowPolicy(
         windows_webview.WebviewPopupWindowPolicy.deny,
       );
-      await controller.loadUrl(salmonSupportUrl);
+      if (!reusedController) {
+        await controller.loadUrl(salmonSupportUrl);
+      }
       if (mounted) setState(() {});
     } catch (value) {
       if (mounted) setState(() => error = value);
@@ -2142,7 +2195,8 @@ class _WindowsEmbeddedCustomerServicePageState
 
   @override
   void dispose() {
-    controller.dispose();
+    // Keep the WebView alive after leaving this route. Chatwoot stores the
+    // visitor and conversation identity in this live browser context.
     super.dispose();
   }
 
@@ -2216,6 +2270,40 @@ class _ChatwootPageState extends State<ChatwootPage> {
   bool sending = false;
   bool rebuildingSession = false;
 
+  String _connectionError(Object failure, String stage) {
+    if (failure is DioException) {
+      final status = failure.response?.statusCode;
+      if (status != null) return '$stage失败（HTTP $status）';
+      final detail = switch (failure.type) {
+        DioExceptionType.connectionTimeout ||
+        DioExceptionType.receiveTimeout ||
+        DioExceptionType.sendTimeout => '连接超时',
+        DioExceptionType.connectionError => '网络或 TLS 连接失败',
+        DioExceptionType.badCertificate => '服务器证书验证失败',
+        _ => '请求未完成（${failure.type.name}）',
+      };
+      return '$stage失败：$detail';
+    }
+    return '$stage失败：${salmonFriendlyError(failure)}';
+  }
+
+  Future<void> _openSupportWebsite() async {
+    var opened = false;
+    try {
+      opened = await launchUrl(
+        Uri.parse(salmonSupportUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      // The fallback remains on this page if Windows cannot launch a browser.
+    }
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('无法打开浏览器，请检查默认浏览器设置')));
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -2223,6 +2311,7 @@ class _ChatwootPageState extends State<ChatwootPage> {
   }
 
   Future<void> _connect({bool rebuild = false}) async {
+    var stage = '获取账号';
     if (mounted)
       setState(() {
         loading = true;
@@ -2231,12 +2320,14 @@ class _ChatwootPageState extends State<ChatwootPage> {
     try {
       if (rebuild) await salmonService.clearChatwootSession();
       final user = await salmonService.fetchUserInfo();
+      stage = '建立客服会话';
       final session = await salmonService.prepareChatwoot(
         '${user['email'] ?? ''}',
       );
       sourceId = '${session['source_id']}';
       conversationId = session['conversation_id'] as int;
       await Future<void>.delayed(const Duration(milliseconds: 450));
+      stage = '读取客服消息';
       await _refresh(rethrowOnError: true);
       refreshTimer?.cancel();
       refreshTimer = Timer.periodic(
@@ -2244,18 +2335,22 @@ class _ChatwootPageState extends State<ChatwootPage> {
         (_) => _refresh(silent: true),
       );
     } catch (e) {
-      final message = e.toString();
-      if ((message.contains('404') || message.contains('401')) &&
+      if (stage == '读取客服消息' &&
+          e is DioException &&
+          e.response?.statusCode == 404 &&
           !rebuild &&
           !rebuildingSession) {
         rebuildingSession = true;
-        await _connect(rebuild: true);
-        rebuildingSession = false;
+        try {
+          await _connect(rebuild: true);
+        } finally {
+          rebuildingSession = false;
+        }
         return;
       }
       if (mounted)
         setState(() {
-          error = '客服连接失败，请检查网络后重试';
+          error = _connectionError(e, stage);
           loading = false;
         });
     }
@@ -2314,6 +2409,37 @@ class _ChatwootPageState extends State<ChatwootPage> {
     }
   }
 
+  Future<void> _attach() async {
+    if (sending || sourceId == null || conversationId == null) return;
+    final file = await FilePicker.pickFile();
+    if (!mounted || file == null) return;
+    if (file.path == null) return;
+    setState(() => sending = true);
+    try {
+      await salmonService.sendChatwootAttachment(
+        sourceId!,
+        conversationId!,
+        file.path!,
+        file.name,
+      );
+      await _refresh();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('附件发送失败：${salmonFriendlyError(e)}')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => sending = false);
+    }
+  }
+
+  Future<void> _openAttachment(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.scheme != 'https') return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   @override
   void dispose() {
     refreshTimer?.cancel();
@@ -2325,7 +2451,7 @@ class _ChatwootPageState extends State<ChatwootPage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      automaticallyImplyLeading: false,
+      automaticallyImplyLeading: true,
       title: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -2380,6 +2506,12 @@ class _ChatwootPageState extends State<ChatwootPage> {
                     icon: const Icon(Icons.refresh_rounded),
                     label: const Text('重新连接'),
                   ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _openSupportWebsite,
+                    icon: const Icon(Icons.open_in_browser_rounded),
+                    label: const Text('在浏览器中打开客服'),
+                  ),
                 ],
               ),
             ),
@@ -2410,6 +2542,10 @@ class _ChatwootPageState extends State<ChatwootPage> {
                           final message = messages[index];
                           final mine =
                               int.tryParse('${message['message_type']}') == 0;
+                          final attachments = message['attachments'] is List
+                              ? (message['attachments'] as List)
+                                    .whereType<Map>()
+                              : const Iterable<Map>.empty();
                           return Align(
                             alignment: mine
                                 ? Alignment.centerRight
@@ -2430,11 +2566,40 @@ class _ChatwootPageState extends State<ChatwootPage> {
                                     : context.colorScheme.surfaceContainerHigh,
                                 borderRadius: BorderRadius.circular(18),
                               ),
-                              child: Text(
-                                '${message['content'] ?? ''}',
-                                style: TextStyle(
-                                  color: mine ? Colors.white : null,
-                                ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if ('${message['content'] ?? ''}'
+                                      .trim()
+                                      .isNotEmpty)
+                                    Text(
+                                      '${message['content']}',
+                                      style: TextStyle(
+                                        color: mine ? Colors.white : null,
+                                      ),
+                                    ),
+                                  for (final attachment in attachments)
+                                    TextButton.icon(
+                                      onPressed: () => _openAttachment(
+                                        '${attachment['data_url'] ?? ''}',
+                                      ),
+                                      icon: Icon(
+                                        attachment['file_type'] == 'image'
+                                            ? Icons.image_outlined
+                                            : Icons.attach_file_rounded,
+                                      ),
+                                      label: Text(
+                                        attachment['extension'] == null
+                                            ? '查看附件'
+                                            : '查看 ${attachment['extension']} 附件',
+                                      ),
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: mine
+                                            ? Colors.white
+                                            : null,
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                           );
@@ -2447,6 +2612,11 @@ class _ChatwootPageState extends State<ChatwootPage> {
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                   child: Row(
                     children: [
+                      IconButton(
+                        tooltip: '发送附件',
+                        onPressed: sending ? null : _attach,
+                        icon: const Icon(Icons.attach_file_rounded),
+                      ),
                       Expanded(
                         child: TextField(
                           controller: input,

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:fl_clash/services/salmon_service.dart';
@@ -293,6 +294,125 @@ void main() {
           ),
         ),
       );
+    },
+  );
+
+  test('customer service reuses the conversation after reopening', () async {
+    SharedPreferences.setMockInitialValues({});
+    var contactsCreated = 0;
+    var conversationsCreated = 0;
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            final path = options.uri.path;
+            if (options.method == 'POST' && path.endsWith('/contacts')) {
+              contactsCreated++;
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {'source_id': 'contact-$contactsCreated'},
+                ),
+              );
+            } else if (options.method == 'POST' &&
+                path.endsWith('/conversations')) {
+              conversationsCreated++;
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {'id': conversationsCreated},
+                ),
+              );
+            } else if (options.method == 'GET' && path.endsWith('/messages')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'payload': [
+                      {'id': 12, 'content': '继续上次会话'},
+                    ],
+                  },
+                ),
+              );
+            } else {
+              handler.reject(DioException(requestOptions: options));
+            }
+          },
+        ),
+      );
+
+    final first = await SalmonService(
+      dio: dio,
+    ).prepareChatwoot(' Member@Example.com ');
+    final reopened = await SalmonService(
+      dio: dio,
+    ).prepareChatwoot('member@example.com');
+    expect(reopened, first);
+    expect(first, {'source_id': 'contact-1', 'conversation_id': 1});
+    expect(contactsCreated, 1);
+    expect(conversationsCreated, 1);
+    expect(
+      await SalmonService(dio: dio).fetchChatwootMessages('contact-1', 1),
+      [
+        {'id': 12, 'content': '继续上次会话'},
+      ],
+    );
+
+    final other = await SalmonService(
+      dio: dio,
+    ).prepareChatwoot('other@example.com');
+    expect(other, {'source_id': 'contact-2', 'conversation_id': 2});
+    expect(contactsCreated, 2);
+    expect(conversationsCreated, 2);
+  });
+
+  test('customer service refuses an unidentified account', () async {
+    SharedPreferences.setMockInitialValues({});
+    final service = SalmonService(dio: Dio());
+    await expectLater(service.prepareChatwoot('  '), throwsStateError);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('salmon_chatwoot_contact'), isNull);
+  });
+
+  test(
+    'customer service uploads an attachment to the saved conversation',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'salmon-chat-test-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}example.txt',
+      );
+      await file.writeAsString('test attachment');
+      String? requestPath;
+      FormData? uploaded;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requestPath = options.uri.path;
+              uploaded = options.data as FormData;
+              handler.resolve(
+                Response(requestOptions: options, data: {'id': 3}),
+              );
+            },
+          ),
+        );
+
+      await SalmonService(dio: dio).sendChatwootAttachment(
+        'saved-contact',
+        42,
+        file.path,
+        file.uri.pathSegments.last,
+      );
+
+      expect(
+        requestPath,
+        endsWith('/contacts/saved-contact/conversations/42/messages'),
+      );
+      expect(uploaded!.files.single.key, 'attachments[]');
+      expect(uploaded!.files.single.value.filename, 'example.txt');
     },
   );
 }
