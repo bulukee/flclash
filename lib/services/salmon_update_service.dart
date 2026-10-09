@@ -4,10 +4,13 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_clash/plugins/app.dart';
+import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SalmonAppUpdate {
   final String version;
@@ -54,6 +57,10 @@ class SalmonUpdateService {
   SalmonUpdateService._();
   static bool _checking = false;
   static bool _dialogVisible = false;
+  static const _lastPromptedUpdateKey = 'salmon_last_prompted_update';
+  static const _updateAvailableKey = 'salmon_update_available';
+  static final ValueNotifier<bool> updateAvailable = ValueNotifier<bool>(false);
+  static Future<void>? _availabilityRestore;
   static final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 15),
@@ -85,6 +92,7 @@ class SalmonUpdateService {
   }
 
   static Future<SalmonAppUpdate?> check() async {
+    await (_availabilityRestore ??= _restoreAvailability());
     Object? lastError;
     SalmonAppUpdate? newestUpdate;
     final info = await PackageInfo.fromPlatform();
@@ -141,29 +149,58 @@ class SalmonUpdateService {
         lastError = error;
       }
     }
+    // A backup source may fail even when another source returned a valid
+    // response. Only report an error when no source produced a usable result.
+    if (newestUpdate == null && lastError != null) throw lastError;
+    updateAvailable.value = newestUpdate != null;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_updateAvailableKey, updateAvailable.value);
     if (newestUpdate != null) return newestUpdate;
-    if (lastError != null) throw lastError;
     return null;
   }
 
-  static Future<void> checkAndPrompt(BuildContext context) async {
+  static Future<void> _restoreAvailability() async {
+    final preferences = await SharedPreferences.getInstance();
+    updateAvailable.value = preferences.getBool(_updateAvailableKey) ?? false;
+  }
+
+  static Future<void> checkAndPrompt(
+    BuildContext context, {
+    bool manual = false,
+  }) async {
     final supported = Platform.isAndroid || Platform.isWindows;
-    if (_checking || _dialogVisible || !supported) return;
+    if (!supported) {
+      if (manual && context.mounted) context.showNotifier('当前平台暂不支持客户端内更新');
+      return;
+    }
+    if (_checking || _dialogVisible) return;
     _checking = true;
     try {
       final update = await check();
-      if (update == null || !context.mounted) return;
+      if (!context.mounted) return;
+      if (update == null) {
+        if (manual)
+          context.showNotifier(context.appLocalizations.checkUpdateError);
+        return;
+      }
+      if (!manual) {
+        final preferences = await SharedPreferences.getInstance();
+        final updateKey = '${update.version}:${update.versionCode}';
+        if (preferences.getString(_lastPromptedUpdateKey) == updateKey) return;
+        await preferences.setString(_lastPromptedUpdateKey, updateKey);
+        if (!context.mounted) return;
+      }
       _dialogVisible = true;
       await showDialog<void>(
         context: context,
         barrierDismissible: !update.force,
         builder: (_) => PopScope(
           canPop: !update.force,
-          child: _UpdateDialog(update: update),
+          child: _UpdateDialog(update: update, autoInstall: manual),
         ),
       );
     } catch (_) {
-      // 启动检查静默失败，不阻塞正常使用。
+      if (manual && context.mounted) context.showNotifier('检查客户端更新失败，请检查网络后重试');
     } finally {
       _checking = false;
       _dialogVisible = false;
@@ -201,13 +238,8 @@ class SalmonUpdateService {
   static Future<bool> launchInstaller(String path) async {
     if (Platform.isAndroid) return App().installApk(path);
     if (Platform.isWindows) {
-      final process = await Process.start(
-        path,
-        const [],
-        mode: ProcessStartMode.detached,
-        runInShell: true,
-      );
-      return process.pid > 0;
+      await Process.start(path, const [], runInShell: true);
+      return true;
     }
     return false;
   }
@@ -215,7 +247,8 @@ class SalmonUpdateService {
 
 class _UpdateDialog extends StatefulWidget {
   final SalmonAppUpdate update;
-  const _UpdateDialog({required this.update});
+  final bool autoInstall;
+  const _UpdateDialog({required this.update, this.autoInstall = false});
   @override
   State<_UpdateDialog> createState() => _UpdateDialogState();
 }
@@ -223,6 +256,17 @@ class _UpdateDialog extends StatefulWidget {
 class _UpdateDialogState extends State<_UpdateDialog> {
   double? _progress;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoInstall) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _install();
+      });
+    }
+  }
+
   Future<void> _install() async {
     if (_progress != null) return;
     setState(() {

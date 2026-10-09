@@ -11,8 +11,15 @@ AppPublisherURL=https://swywl.com
 AppSupportURL=https://swywl.com
 AppUpdatesURL=https://swywl.com
 DefaultDirName={autopf64}\Salmon
+; Keep every release on the same installation path so the setup EXE upgrades
+; the existing Salmon installation instead of creating a second copy.
+UsePreviousAppDir=yes
+DisableDirPage=no
+DirExistsWarning=no
 DefaultGroupName=三文鱼
 DisableProgramGroupPage=yes
+CloseApplications=yes
+RestartApplications=no
 OutputDir={#SourcePath}\..\..\..\dist
 OutputBaseFilename=Salmon-Windows-x64-{#MyAppVersion}-Setup
 Compression=lzma2/ultra64

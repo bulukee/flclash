@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/services/salmon_update_service.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/widgets/list.dart';
 import 'package:fl_clash/widgets/scaffold.dart';
@@ -42,7 +43,36 @@ class AboutView extends StatelessWidget {
       title: appLocalizations.more,
       items: [
         ListItem(
+          leading: const Icon(Icons.system_update_alt_rounded),
+          title: ValueListenableBuilder<bool>(
+            valueListenable: SalmonUpdateService.updateAvailable,
+            builder: (_, available, __) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('客户端更新'),
+                  if (available) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+          onTap: () {
+            SalmonUpdateService.checkAndPrompt(context, manual: true);
+          },
+        ),
+        ListItem(
           title: Text(appLocalizations.checkUpdate),
+          subtitle: const Text('代理核心'),
           onTap: () {
             _checkUpdate(context);
           },
