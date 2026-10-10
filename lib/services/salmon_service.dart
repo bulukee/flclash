@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:fl_clash/services/salmon_dns.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -163,7 +164,9 @@ class SalmonService {
               sendTimeout: const Duration(seconds: 20),
               headers: const {'Accept': 'application/json'},
             ),
-          );
+          ) {
+    if (dio == null) installSalmonDnsFallback(_dio);
+  }
 
   Future<List<String>> fetchBaseUrls({bool forceRefresh = false}) async {
     final preferences = await SharedPreferences.getInstance();
@@ -191,7 +194,7 @@ class SalmonService {
           queryParameters: {'_': DateTime.now().millisecondsSinceEpoch},
           options: Options(
             responseType: ResponseType.plain,
-            connectTimeout: const Duration(seconds: 5),
+            connectTimeout: const Duration(seconds: 12),
             receiveTimeout: const Duration(seconds: 5),
             headers: const {'Cache-Control': 'no-cache'},
           ),
@@ -357,10 +360,7 @@ class SalmonService {
         final authData = await _login(baseUrl, account, password);
         var subscribeUrl = '';
         try {
-          subscribeUrl = await _getSubscribeUrl(
-            baseUrl,
-            authData,
-          ).timeout(const Duration(seconds: 4));
+          subscribeUrl = await _getSubscribeUrl(baseUrl, authData);
         } catch (_) {
           // A newly registered user may not have a plan or subscription yet.
           // Authentication is still successful and the user must enter the app.
@@ -579,7 +579,7 @@ class SalmonService {
     }
     try {
       final data = await _authenticatedRequest('user/info');
-      if (data is! Map) return const {};
+      if (data is! Map) throw const FormatException('Invalid account response');
       final value = Map<String, dynamic>.from(data);
       await _writeDataCache(_userDataCacheKey, value);
       return value;
@@ -603,7 +603,8 @@ class SalmonService {
     }
     try {
       final data = await _authenticatedRequest('user/getSubscribe');
-      if (data is! Map) return const {};
+      if (data is! Map)
+        throw const FormatException('Invalid subscription response');
       final value = Map<String, dynamic>.from(data);
       await _writeDataCache(_subscribeDataCacheKey, value);
       return value;
@@ -1350,7 +1351,7 @@ class SalmonService {
       data: {'email': account, 'password': password},
       options: Options(
         contentType: Headers.formUrlEncodedContentType,
-        connectTimeout: const Duration(seconds: 5),
+        connectTimeout: const Duration(seconds: 12),
         receiveTimeout: const Duration(seconds: 5),
         sendTimeout: const Duration(seconds: 5),
       ),
@@ -1368,7 +1369,7 @@ class SalmonService {
       '$baseUrl/api/v1/user/getSubscribe',
       options: Options(
         headers: {'Authorization': authData},
-        connectTimeout: const Duration(seconds: 8),
+        connectTimeout: const Duration(seconds: 12),
         receiveTimeout: const Duration(seconds: 8),
       ),
     );

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:io' show HttpStatus;
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
@@ -8,6 +8,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/services/salmon_dns.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 
@@ -18,10 +19,12 @@ class Request {
 
   Request() {
     dio = Dio(BaseOptions(headers: {'User-Agent': browserUa}));
+    installSalmonDnsFallback(dio);
     _clashDio = Dio();
+    final resolver = SalmonDnsResolver();
     _clashDio.httpClientAdapter = IOHttpClientAdapter(
       createHttpClient: () {
-        final client = HttpClient();
+        final client = createSalmonHttpClient(resolver);
         client.findProxy = (Uri uri) {
           client.userAgent = globalState.ua;
           return FlClashHttpOverrides.handleFindProxy(uri);

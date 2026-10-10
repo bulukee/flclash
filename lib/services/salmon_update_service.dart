@@ -7,6 +7,7 @@ import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/services/salmon_service.dart';
+import 'package:fl_clash/services/salmon_dns.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -61,13 +62,19 @@ class SalmonUpdateService {
   static const _updateAvailableKey = 'salmon_update_available';
   static final ValueNotifier<bool> updateAvailable = ValueNotifier<bool>(false);
   static Future<void>? _availabilityRestore;
-  static final Dio _dio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(minutes: 8),
-      headers: const {'Cache-Control': 'no-cache'},
-    ),
-  );
+  static final Dio _dio = _createDio();
+
+  static Dio _createDio() {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(minutes: 8),
+        headers: const {'Cache-Control': 'no-cache'},
+      ),
+    );
+    installSalmonDnsFallback(dio);
+    return dio;
+  }
 
   static int _compareVersion(String remote, String current) {
     final remoteParts = remote
@@ -94,6 +101,7 @@ class SalmonUpdateService {
   static Future<SalmonAppUpdate?> check() async {
     await (_availabilityRestore ??= _restoreAvailability());
     Object? lastError;
+    var validResponse = false;
     SalmonAppUpdate? newestUpdate;
     final info = await PackageInfo.fromPlatform();
     final currentCode = int.tryParse(info.buildNumber) ?? 0;
@@ -133,6 +141,7 @@ class SalmonUpdateService {
         }
         updateJson['notes'] ??= root['releaseNotes'];
         final update = SalmonAppUpdate.fromJson(updateJson);
+        validResponse = true;
         final buildIsNewer = update.versionCode > currentCode;
         final nameIsNewer = _compareVersion(update.version, info.version) > 0;
         if (!buildIsNewer && !nameIsNewer) continue;
@@ -151,7 +160,7 @@ class SalmonUpdateService {
     }
     // A backup source may fail even when another source returned a valid
     // response. Only report an error when no source produced a usable result.
-    if (newestUpdate == null && lastError != null) throw lastError;
+    if (!validResponse && lastError != null) throw lastError;
     updateAvailable.value = newestUpdate != null;
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_updateAvailableKey, updateAvailable.value);

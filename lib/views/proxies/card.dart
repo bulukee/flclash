@@ -37,9 +37,13 @@ class ProxyCard extends StatelessWidget {
           ? '--'
           : delay == 0
           ? '...'
+          : delay < 0
+          ? 'Timeout'
           : '$delay ms';
       final color = delay == null || delay == 0
           ? const Color(0xFF7B8798)
+          : delay < 0
+          ? const Color(0xFFFF5364)
           : delay < 200
           ? const Color(0xFF43AF57)
           : delay < 400

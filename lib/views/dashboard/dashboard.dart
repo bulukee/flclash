@@ -5,6 +5,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/services/salmon_service.dart';
+import 'package:fl_clash/services/salmon_profile_sync.dart';
 import 'package:fl_clash/services/salmon_traffic_reset.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/proxies/common.dart';
@@ -324,9 +325,10 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     try {
       final profile = ref.read(currentProfileProvider);
       if (profile == null) {
-        throw StateError('当前没有可更新的订阅');
+        await refreshSalmonProfile(ref);
+      } else {
+        await ref.read(profilesActionProvider.notifier).updateProfile(profile);
       }
-      await ref.read(profilesActionProvider.notifier).updateProfile(profile);
       await Future<void>.delayed(const Duration(milliseconds: 650));
       await ref.read(proxiesActionProvider.notifier).updateGroups();
       if (mounted) {
@@ -813,9 +815,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
             padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
             child: Align(
               alignment: Alignment.topCenter,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.topCenter,
+              child: SingleChildScrollView(
                 child: SizedBox(
                   width: contentWidth,
                   child: Column(
@@ -889,7 +889,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                               width: desktop ? 580 : contentWidth,
                               child: Column(
                                 children: [
-                                  _QuickStats(
+                                  DashboardQuickStats(
                                     upload: connected
                                         ? _speed(traffic.up)
                                         : '0 B/s',
@@ -900,7 +900,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                                     onModeTap: () => _showModeSelector(mode),
                                   ),
                                   const SizedBox(height: 14),
-                                  _PlanSummary(
+                                  DashboardPlanSummary(
                                     plan: expired
                                         ? '套餐已过期'
                                         : '${data['plan_name'] ?? '正在获取'}',
@@ -1077,9 +1077,13 @@ class _NodeTile extends ConsumerWidget {
         ? '-- ms'
         : displayDelay == 0
         ? '测速中'
+        : displayDelay < 0
+        ? 'Timeout'
         : '$displayDelay ms';
     final delayColor = displayDelay == null || displayDelay == 0
         ? context.colorScheme.onSurfaceVariant
+        : displayDelay < 0
+        ? Colors.redAccent
         : displayDelay < 350
         ? Colors.green
         : displayDelay < 600
@@ -1365,9 +1369,13 @@ class _ConnectionHero extends StatelessWidget {
                           Text(
                             displayDelay == null || displayDelay == 0
                                 ? '-- ms'
+                                : displayDelay < 0
+                                ? 'Timeout'
                                 : '$displayDelay ms',
-                            style: const TextStyle(
-                              color: Color(0xFF245CFF),
+                            style: TextStyle(
+                              color: displayDelay != null && displayDelay < 0
+                                  ? Colors.redAccent
+                                  : const Color(0xFF245CFF),
                               fontWeight: FontWeight.w900,
                             ),
                           ),
@@ -1436,13 +1444,14 @@ class _DesktopModeCard extends StatelessWidget {
   );
 }
 
-class _QuickStats extends StatelessWidget {
+class DashboardQuickStats extends StatelessWidget {
   final String upload;
   final String download;
   final Mode mode;
   final VoidCallback onModeTap;
 
-  const _QuickStats({
+  const DashboardQuickStats({
+    super.key,
     required this.upload,
     required this.download,
     required this.mode,
@@ -1450,65 +1459,87 @@ class _QuickStats extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Expanded(
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final stacked =
+          constraints.maxWidth < 400 ||
+          MediaQuery.textScalerOf(context).scale(16) > 20;
+      final traffic = _StatPanel(
+        icon: Icons.speed_rounded,
+        label: '实时流量',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.arrow_upward_rounded,
+                  size: 16,
+                  color: Colors.orange.shade700,
+                ),
+                const SizedBox(width: 4),
+                Expanded(child: Text(upload)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                  Icons.arrow_downward_rounded,
+                  size: 16,
+                  color: Colors.green.shade600,
+                ),
+                const SizedBox(width: 4),
+                Expanded(child: Text(download)),
+              ],
+            ),
+          ],
+        ),
+      );
+      final modePanel = InkWell(
+        onTap: onModeTap,
+        borderRadius: BorderRadius.circular(26),
         child: _StatPanel(
-          icon: Icons.speed_rounded,
-          label: '实时流量',
+          icon: Icons.tune_rounded,
+          label: '代理模式',
           child: Row(
             children: [
-              Icon(
-                Icons.arrow_upward_rounded,
-                size: 16,
-                color: Colors.orange.shade700,
+              Expanded(
+                child: Text(
+                  switch (mode) {
+                    Mode.rule => '规则模式',
+                    Mode.global => '全局模式',
+                    Mode.direct => '直连模式',
+                  },
+                  style: TextStyle(
+                    color: context.colorScheme.primary,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
               ),
-              Flexible(child: Text(upload, overflow: TextOverflow.ellipsis)),
-              const SizedBox(width: 6),
-              Icon(
-                Icons.arrow_downward_rounded,
-                size: 16,
-                color: Colors.green.shade600,
-              ),
-              Flexible(child: Text(download, overflow: TextOverflow.ellipsis)),
+              const Icon(Icons.chevron_right_rounded),
             ],
           ),
         ),
-      ),
-      const SizedBox(width: 14),
-      Expanded(
-        child: InkWell(
-          onTap: onModeTap,
-          borderRadius: BorderRadius.circular(26),
-          child: _StatPanel(
-            icon: Icons.tune_rounded,
-            label: '代理模式',
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    switch (mode) {
-                      Mode.rule => '规则模式',
-                      Mode.global => '全局模式',
-                      Mode.direct => '直连模式',
-                    },
-                    style: TextStyle(
-                      color: context.colorScheme.primary,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                const Icon(Icons.chevron_right_rounded),
-              ],
-            ),
-          ),
-        ),
-      ),
-    ],
+      );
+      if (stacked) {
+        return Column(
+          children: [traffic, const SizedBox(height: 12), modePanel],
+        );
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: traffic),
+          const SizedBox(width: 14),
+          Expanded(child: modePanel),
+        ],
+      );
+    },
   );
 }
 
-class _PlanSummary extends StatelessWidget {
+class DashboardPlanSummary extends StatelessWidget {
   final String plan;
   final String remaining;
   final String expiry;
@@ -1516,7 +1547,8 @@ class _PlanSummary extends StatelessWidget {
   final bool showResetTraffic;
   final VoidCallback onResetTraffic;
 
-  const _PlanSummary({
+  const DashboardPlanSummary({
+    super.key,
     required this.plan,
     required this.remaining,
     required this.expiry,
@@ -1545,55 +1577,64 @@ class _PlanSummary extends StatelessWidget {
         ),
       ],
     ),
-    child: Row(
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          width: 46,
-          height: 46,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF245CFF), Color(0xFF755BFF)],
+        Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Color(0xFF245CFF), Color(0xFF755BFF)],
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.auto_awesome_rounded,
+                color: Colors.white,
+              ),
             ),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('当前套餐', style: TextStyle(color: Color(0xFF64789A))),
-                  SizedBox(width: 5),
-                  Icon(
-                    Icons.favorite_rounded,
-                    size: 13,
-                    color: Color(0xFF755BFF),
+                  const Wrap(
+                    children: [
+                      Text('当前套餐', style: TextStyle(color: Color(0xFF64789A))),
+                      SizedBox(width: 5),
+                      Icon(
+                        Icons.favorite_rounded,
+                        size: 13,
+                        color: Color(0xFF755BFF),
+                      ),
+                    ],
                   ),
+                  Text(
+                    plan,
+                    style: const TextStyle(
+                      color: Color(0xFF10233F),
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  if (showResetTraffic) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: onResetTraffic,
+                      icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                      label: const Text('重置流量'),
+                    ),
+                  ],
                 ],
               ),
-              Text(
-                plan,
-                style: const TextStyle(
-                  color: Color(0xFF10233F),
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              if (showResetTraffic) ...[
-                const SizedBox(height: 8),
-                FilledButton.tonalIcon(
-                  onPressed: onResetTraffic,
-                  icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                  label: const Text('重置流量'),
-                ),
-              ],
-            ],
-          ),
+            ),
+          ],
         ),
+        const SizedBox(height: 12),
         Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               expiry == '套餐已过期' ? '套餐已过期' : '到期 $expiry',
@@ -1645,7 +1686,7 @@ class _StatPanel extends StatelessWidget {
     final isMode = icon == Icons.tune_rounded;
     return Container(
       width: double.infinity,
-      height: 116,
+      constraints: const BoxConstraints(minHeight: 116),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -1666,6 +1707,7 @@ class _StatPanel extends StatelessWidget {
         ),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -1688,16 +1730,18 @@ class _StatPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 7),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],
           ),
-          const Spacer(),
+          const SizedBox(height: 16),
           child,
         ],
       ),

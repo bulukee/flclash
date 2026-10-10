@@ -3,6 +3,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/services/salmon_service.dart';
+import 'package:fl_clash/services/salmon_profile_sync.dart';
 import 'package:fl_clash/views/proxies/common.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/material.dart';
@@ -81,9 +82,10 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
     try {
       final profile = ref.read(currentProfileProvider);
       if (profile == null) {
-        throw StateError('当前没有可更新的订阅');
+        await refreshSalmonProfile(ref);
+      } else {
+        await ref.read(profilesActionProvider.notifier).updateProfile(profile);
       }
-      await ref.read(profilesActionProvider.notifier).updateProfile(profile);
       await Future<void>.delayed(const Duration(milliseconds: 650));
       await ref.read(proxiesActionProvider.notifier).updateGroups();
       if (mounted)
@@ -221,7 +223,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
                         itemCount: nodes.length,
                         itemBuilder: (_, index) {
                           final proxy = nodes[index];
-                          return _NodeRow(
+                          return SalmonNodeCard(
                             proxy: proxy,
                             active: proxy.name == current,
                             testUrl: group!.testUrl,
@@ -256,12 +258,13 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
   }
 }
 
-class _NodeRow extends ConsumerWidget {
+class SalmonNodeCard extends ConsumerWidget {
   final Proxy proxy;
   final bool active;
   final String? testUrl;
   final VoidCallback onTap;
-  const _NodeRow({
+  const SalmonNodeCard({
+    super.key,
     required this.proxy,
     required this.active,
     required this.testUrl,
@@ -302,6 +305,8 @@ class _NodeRow extends ConsumerWidget {
     );
     final color = delay == null || delay == 0
         ? context.colorScheme.onSurfaceVariant
+        : delay < 0
+        ? Colors.redAccent
         : delay < 350
         ? Colors.green
         : delay < 600
@@ -367,7 +372,11 @@ class _NodeRow extends ConsumerWidget {
                     ),
                   ),
                   Text(
-                    delay == null || delay == 0 ? '--' : '$delay ms',
+                    delay == null || delay == 0
+                        ? '--'
+                        : delay < 0
+                        ? 'Timeout'
+                        : '$delay ms',
                     style: TextStyle(
                       fontSize: 11,
                       color: color,

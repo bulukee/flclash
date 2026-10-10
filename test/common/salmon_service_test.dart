@@ -7,6 +7,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  for (final kind in ['account', 'subscription']) {
+    test('rejects malformed $kind data instead of reporting no plan', () async {
+      SharedPreferences.setMockInitialValues({
+        'salmon_base_url': 'https://saved.example.com',
+        'salmon_auth_data': 'session-token',
+      });
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) => handler.resolve(
+              Response(requestOptions: options, data: {'data': []}),
+            ),
+          ),
+        );
+      final service = SalmonService(dio: dio);
+      await expectLater(
+        kind == 'account'
+            ? service.fetchUserInfo(forceRefresh: true)
+            : service.fetchSubscribeInfo(forceRefresh: true),
+        throwsFormatException,
+      );
+    });
+  }
   test('parses plain and Base64 fallback URLs', () {
     final encoded = base64Encode(utf8.encode('https://backup.example.com'));
     final config = SalmonRemoteConfig.parse('''
