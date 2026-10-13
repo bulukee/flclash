@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/core.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -59,6 +61,18 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
       CoreEvent(type: CoreEventType.crash, data: message),
     );
     super.onServiceCrash(message);
+  }
+
+  @override
+  void onServiceRecovered() {
+    unawaited(_recoverCoreState());
+    super.onServiceRecovered();
+  }
+
+  Future<void> _recoverCoreState() async {
+    final coreAction = ref.read(coreActionProvider.notifier);
+    await coreAction.connectCore();
+    await coreAction.initCore();
   }
 
   @override

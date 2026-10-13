@@ -1,6 +1,5 @@
 package com.follow.clash.plugins
 
-import com.follow.clash.RunState
 import com.follow.clash.Service
 import com.follow.clash.State
 import com.follow.clash.common.Components
@@ -12,7 +11,9 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -20,6 +21,9 @@ import kotlinx.coroutines.sync.withPermit
 class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default) {
     private lateinit var flutterMethodChannel: MethodChannel
+    private var recoveryJob: Job? = null
+    private var recoverRunningService = false
+    private var intentionallyShutdown = false
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         flutterMethodChannel = MethodChannel(
@@ -76,6 +80,8 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     }
 
     private fun handleShutdown(result: MethodChannel.Result) {
+        intentionallyShutdown = true
+        recoveryJob?.cancel()
         Service.unbind()
         result.success(true)
     }
@@ -101,8 +107,31 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     }
 
     private fun onServiceDisconnected(message: String) {
-        State.runStateFlow.tryEmit(RunState.STOP)
+        recoverRunningService = State.handleServiceDisconnected()
         flutterMethodChannel.invokeMethodOnMainThread<Any>("crash", message)
+        if (!intentionallyShutdown) {
+            scheduleRecovery()
+        }
+    }
+
+    private fun scheduleRecovery() {
+        recoveryJob?.cancel()
+        recoveryJob = launch {
+            repeat(6) { attempt ->
+                delay(if (attempt == 0) 300L else minOf(8_000L, 500L * (1L shl attempt)))
+                Service.bind()
+                val listenerResult = Service.setEventListener { handleSendEvent(it) }
+                if (listenerResult.isSuccess) {
+                    if (recoverRunningService) {
+                        if (!State.recoverService()) {
+                            return@launch
+                        }
+                    }
+                    flutterMethodChannel.invokeMethodOnMainThread<Any>("recovered", null)
+                    return@launch
+                }
+            }
+        }
     }
 
     private fun handleSyncState(call: MethodCall, result: MethodChannel.Result) {
@@ -116,6 +145,10 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
 
 
     fun handleInit(result: MethodChannel.Result) {
+        recoveryJob?.cancel()
+        recoverRunningService = false
+        intentionallyShutdown = false
+        Service.onServiceDisconnected = ::onServiceDisconnected
         Service.bind()
         launch {
             Service.setEventListener {
@@ -127,7 +160,6 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
             }
 
         }
-        Service.onServiceDisconnected = ::onServiceDisconnected
     }
 
     private fun handleGetRunTime(result: MethodChannel.Result) {

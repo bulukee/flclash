@@ -152,6 +152,12 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
     }
   }
 
+  Future<void> _openCustomerService() async {
+    final supportUrl = await salmonService.fetchSupportUrl();
+    if (!mounted) return;
+    await _openLink(supportUrl);
+  }
+
   Future<void> _syncProfile(String subscribeUrl) async {
     try {
       await _saveProfile(subscribeUrl);
@@ -365,8 +371,7 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
                               children: [
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: () =>
-                                        _openLink(salmonSupportUrl),
+                                    onPressed: _openCustomerService,
                                     icon: const Icon(
                                       Icons.support_agent_rounded,
                                     ),

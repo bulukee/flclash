@@ -64,6 +64,22 @@ object State {
         }
     }
 
+    fun handleServiceDisconnected(): Boolean {
+        val wasRunning = runStateFlow.value == RunState.START
+        runStateFlow.tryEmit(RunState.STOP)
+        return wasRunning
+    }
+
+    suspend fun recoverService(): Boolean {
+        return try {
+            setupAndStart()
+            true
+        } catch (_: Exception) {
+            runStateFlow.tryEmit(RunState.STOP)
+            false
+        }
+    }
+
     suspend fun handleStartServiceAction() {
         runLock.withLock {
             if (runStateFlow.value != RunState.STOP) {

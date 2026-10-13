@@ -46,6 +46,13 @@ void main() {
         final title = tester.getRect(find.text('当前套餐'));
         final expiry = tester.getRect(find.text('到期 2026-11-10'));
         expect(title.overlaps(expiry), isFalse);
+        if (width >= 360 && scale == 1.0) {
+          expect(expiry.left, greaterThan(title.right));
+          expect(
+            tester.getRect(find.text('剩余 130 GB')).right,
+            closeTo(expiry.right, 1),
+          );
+        }
       });
     }
   }

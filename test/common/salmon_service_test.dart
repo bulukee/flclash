@@ -52,6 +52,123 @@ void main() {
     );
   });
 
+  test(
+    'parses the optional customer service URL without changing API URLs',
+    () {
+      const supportUrl =
+          'https://support.example.com/widget?website_token=new-inbox#/';
+      final config = SalmonRemoteConfig.parse(
+        jsonEncode({
+          'urls': ['https://main.example.com'],
+          'customerService': {'url': supportUrl},
+          'updates': {
+            'android': {'versionName': '1.2.11'},
+          },
+          'releaseNotes': ['Update'],
+        }),
+      );
+
+      expect(config.urls, ['https://main.example.com']);
+      expect(config.customerServiceUrl, supportUrl);
+      expect(
+        SalmonRemoteConfig.parse(
+          '{"urls":["https://main.example.com"]}',
+        ).customerServiceUrl,
+        isNull,
+      );
+    },
+  );
+
+  for (final supportUrl in [
+    'http://support.example.com',
+    'javascript:alert(1)',
+    'https://user:password@support.example.com',
+    '',
+  ]) {
+    test('ignores an unsafe customer service URL: $supportUrl', () {
+      final config = SalmonRemoteConfig.parse(
+        jsonEncode({
+          'urls': ['https://main.example.com'],
+          'customerService': {'url': supportUrl},
+        }),
+      );
+
+      expect(config.customerServiceUrl, isNull);
+      expect(config.urls, ['https://main.example.com']);
+    });
+  }
+
+  test(
+    'caches the customer service URL for offline use after restart',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const supportUrl =
+          'https://support.example.com/widget?website_token=new-inbox#/';
+      var offline = false;
+      var configRequests = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              configRequests++;
+              if (offline) {
+                handler.reject(DioException(requestOptions: options));
+                return;
+              }
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: jsonEncode({
+                    'urls': ['https://main.example.com'],
+                    'customerService': {'url': supportUrl},
+                  }),
+                ),
+              );
+            },
+          ),
+        );
+
+      expect(await SalmonService(dio: dio).fetchSupportUrl(), supportUrl);
+      expect(await SalmonService(dio: dio).fetchSupportUrl(), supportUrl);
+      expect(configRequests, 1);
+      offline = true;
+      expect(
+        await SalmonService(dio: dio).fetchSupportUrl(forceRefresh: true),
+        supportUrl,
+      );
+      expect(configRequests, 1 + salmonConfigUrls.length);
+    },
+  );
+
+  test(
+    'missing customer service config keeps the default or last URL',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) => handler.resolve(
+              Response(
+                requestOptions: options,
+                data: '{"urls":["https://main.example.com"]}',
+              ),
+            ),
+          ),
+        );
+
+      expect(await SalmonService(dio: dio).fetchSupportUrl(), salmonSupportUrl);
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(
+        'salmon_customer_service_url',
+        'https://support.example.com',
+      );
+      expect(
+        await SalmonService(dio: dio).fetchSupportUrl(forceRefresh: true),
+        'https://support.example.com',
+      );
+    },
+  );
+
   test('parses a Base64-encoded JSON document', () {
     final source = base64Encode(
       utf8.encode(
@@ -395,6 +512,194 @@ void main() {
     await expectLater(service.prepareChatwoot('  '), throwsStateError);
     final preferences = await SharedPreferences.getInstance();
     expect(preferences.getString('salmon_chatwoot_contact'), isNull);
+  });
+
+  test('remote customer service API keeps its saved conversation', () async {
+    SharedPreferences.setMockInitialValues({});
+    final paths = <String>[];
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (salmonConfigUrls.contains(
+              options.uri.toString().split('?').first,
+            )) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: jsonEncode({
+                    'urls': ['https://main.example.com'],
+                    'customerService': {
+                      'url':
+                          'https://support.example.com/widget?website_token=new-inbox#/',
+                    },
+                  }),
+                ),
+              );
+              return;
+            }
+            expect(options.uri.host, 'support.example.com');
+            paths.add(options.uri.path);
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: options.uri.path.endsWith('/contacts')
+                    ? {'source_id': 'saved-contact'}
+                    : options.uri.path.endsWith('/conversations')
+                    ? {'id': 42}
+                    : {'payload': []},
+              ),
+            );
+          },
+        ),
+      );
+
+    final firstService = SalmonService(dio: dio);
+    final first = await firstService.prepareChatwoot('member@example.com');
+    final reopenedService = SalmonService(dio: dio);
+    expect(await reopenedService.prepareChatwoot('member@example.com'), first);
+    await reopenedService.fetchChatwootMessages('saved-contact', 42);
+    expect(paths, [
+      '/public/api/v1/inboxes/new-inbox/contacts',
+      '/public/api/v1/inboxes/new-inbox/contacts/saved-contact/conversations',
+      '/public/api/v1/inboxes/new-inbox/contacts/saved-contact/conversations/42/messages',
+    ]);
+  });
+
+  test(
+    'changing customer service does not send old IDs to the new inbox',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      var inbox = 'first-inbox';
+      var contactsCreated = 0;
+      var conversationsCreated = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              if (salmonConfigUrls.contains(
+                options.uri.toString().split('?').first,
+              )) {
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: jsonEncode({
+                      'urls': ['https://main.example.com'],
+                      'customerService': {
+                        'url':
+                            'https://support.example.com/widget?website_token=$inbox#/',
+                      },
+                    }),
+                  ),
+                );
+                return;
+              }
+              expect(
+                options.uri.path,
+                startsWith('/public/api/v1/inboxes/$inbox/'),
+              );
+              if (options.uri.path.endsWith('/contacts')) {
+                contactsCreated++;
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: {'source_id': 'contact-$contactsCreated'},
+                  ),
+                );
+              } else {
+                conversationsCreated++;
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: {'id': conversationsCreated},
+                  ),
+                );
+              }
+            },
+          ),
+        );
+      final service = SalmonService(dio: dio);
+      expect(await service.prepareChatwoot('member@example.com'), {
+        'source_id': 'contact-1',
+        'conversation_id': 1,
+      });
+      inbox = 'second-inbox';
+      await service.fetchSupportUrl(forceRefresh: true);
+      final changed = await service.prepareChatwoot('member@example.com');
+      expect(changed, {'source_id': 'contact-2', 'conversation_id': 2});
+      expect(await service.prepareChatwoot('member@example.com'), changed);
+      expect(contactsCreated, 2);
+      expect(conversationsCreated, 2);
+    },
+  );
+
+  test('the default inbox keeps sessions saved by older clients', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_chatwoot_email': 'member@example.com',
+      'salmon_chatwoot_contact': 'existing-contact',
+      'salmon_chatwoot_conversation': 42,
+      'salmon_base_urls_cache': jsonEncode(['https://main.example.com']),
+      'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            fail('The existing conversation should not make an HTTP request');
+          },
+        ),
+      );
+
+    expect(
+      await SalmonService(dio: dio).prepareChatwoot('member@example.com'),
+      {'source_id': 'existing-contact', 'conversation_id': 42},
+    );
+  });
+
+  test('a config refresh does not redirect an active conversation', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_chatwoot_email': 'member@example.com',
+      'salmon_chatwoot_contact': 'existing-contact',
+      'salmon_chatwoot_conversation': 42,
+      'salmon_base_urls_cache': jsonEncode(['https://main.example.com']),
+      'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (salmonConfigUrls.contains(
+              options.uri.toString().split('?').first,
+            )) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: jsonEncode({
+                    'urls': ['https://main.example.com'],
+                    'customerService': {
+                      'url':
+                          'https://support.example.com/widget?website_token=new-inbox#/',
+                    },
+                  }),
+                ),
+              );
+              return;
+            }
+            expect(options.uri.host, 'chat.swywl.com');
+            expect(
+              options.uri.path,
+              endsWith('/contacts/existing-contact/conversations/42/messages'),
+            );
+            handler.resolve(
+              Response(requestOptions: options, data: {'payload': []}),
+            );
+          },
+        ),
+      );
+    final service = SalmonService(dio: dio);
+    await service.prepareChatwoot('member@example.com');
+    await service.fetchSupportUrl(forceRefresh: true);
+    await service.fetchChatwootMessages('existing-contact', 42);
   });
 
   test(

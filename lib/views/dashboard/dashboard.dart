@@ -1250,12 +1250,7 @@ class _ConnectionHero extends StatelessWidget {
     final displayDelay = estimatedOneWayDelay(delay);
     return Container(
       constraints: BoxConstraints(minHeight: compact ? 430 : 0),
-      padding: EdgeInsets.fromLTRB(
-        20,
-        compact ? 16 : 24,
-        20,
-        compact ? 16 : 20,
-      ),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(30),
         gradient: const LinearGradient(
@@ -1308,13 +1303,13 @@ class _ConnectionHero extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(height: compact ? 12 : 24),
+          const SizedBox(height: 12),
           _PowerOrb(
             connected: connected,
             onTap: onPowerTap,
-            scale: compact ? .78 : 1,
+            scale: compact ? .78 : .85,
           ),
-          SizedBox(height: compact ? 14 : 26),
+          const SizedBox(height: 14),
           if (showNode)
             Center(
               child: SizedBox(
@@ -1462,7 +1457,7 @@ class DashboardQuickStats extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final stacked =
-          constraints.maxWidth < 400 ||
+          constraints.maxWidth < 300 ||
           MediaQuery.textScalerOf(context).scale(16) > 20;
       final traffic = _StatPanel(
         icon: Icons.speed_rounded,
@@ -1558,115 +1553,136 @@ class DashboardPlanSummary extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xFFE8F0FF), Color(0xFFEDF1FF)],
-      ),
-      borderRadius: BorderRadius.circular(30),
-      border: Border.all(color: const Color(0xFFD9E4F6)),
-      boxShadow: [
-        BoxShadow(
-          color: const Color(0xFF245CFF).withValues(alpha: .13),
-          blurRadius: 24,
-          offset: const Offset(0, 10),
-        ),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF245CFF), Color(0xFF755BFF)],
-                ),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.auto_awesome_rounded,
-                color: Colors.white,
-              ),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact =
+          constraints.maxWidth < 300 ||
+          MediaQuery.textScalerOf(context).scale(16) > 20;
+      final details = Column(
+        crossAxisAlignment: compact
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.end,
+        children: [
+          Text(
+            expiry == '套餐已过期' ? '套餐已过期' : '到期 $expiry',
+            textAlign: compact ? TextAlign.start : TextAlign.end,
+            style: const TextStyle(
+              color: Color(0xFF405E86),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Wrap(
-                    children: [
-                      Text('当前套餐', style: TextStyle(color: Color(0xFF64789A))),
-                      SizedBox(width: 5),
-                      Icon(
-                        Icons.favorite_rounded,
-                        size: 13,
-                        color: Color(0xFF755BFF),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    plan,
-                    style: const TextStyle(
-                      color: Color(0xFF10233F),
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  if (showResetTraffic) ...[
-                    const SizedBox(height: 8),
-                    FilledButton.tonalIcon(
-                      onPressed: onResetTraffic,
-                      icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                      label: const Text('重置流量'),
-                    ),
-                  ],
-                ],
-              ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            expiry == '套餐已过期' ? '剩余 0 GB' : '剩余 $remaining',
+            textAlign: compact ? TextAlign.start : TextAlign.end,
+            style: const TextStyle(
+              color: Color(0xFF245CFF),
+              fontWeight: FontWeight.w900,
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+          ),
+          if (resetLabel != null) ...[
+            const SizedBox(height: 4),
             Text(
-              expiry == '套餐已过期' ? '套餐已过期' : '到期 $expiry',
+              resetLabel!,
+              textAlign: compact ? TextAlign.start : TextAlign.end,
               style: const TextStyle(
                 color: Color(0xFF405E86),
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              expiry == '套餐已过期' ? '剩余 0 GB' : '剩余 $remaining',
-              style: const TextStyle(
-                color: Color(0xFF245CFF),
-                fontWeight: FontWeight.w900,
-              ),
+          ],
+          if (showResetTraffic) ...[
+            const SizedBox(height: 8),
+            FilledButton.tonalIcon(
+              onPressed: onResetTraffic,
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('重置流量'),
             ),
-            if (resetLabel != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                resetLabel!,
-                style: const TextStyle(
-                  color: Color(0xFF405E86),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
+          ],
+        ],
+      );
+
+      final planInfo = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF245CFF), Color(0xFF755BFF)],
               ),
-            ],
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Wrap(
+                  children: [
+                    Text('当前套餐', style: TextStyle(color: Color(0xFF64789A))),
+                    SizedBox(width: 5),
+                    Icon(
+                      Icons.favorite_rounded,
+                      size: 13,
+                      color: Color(0xFF755BFF),
+                    ),
+                  ],
+                ),
+                Text(
+                  plan,
+                  maxLines: compact ? 2 : 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF10233F),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFE8F0FF), Color(0xFFEDF1FF)],
+          ),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: const Color(0xFFD9E4F6)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF245CFF).withValues(alpha: .13),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
+            ),
           ],
         ),
-      ],
-    ),
+        child: compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [planInfo, const SizedBox(height: 12), details],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: planInfo),
+                  const SizedBox(width: 12),
+                  Expanded(child: details),
+                ],
+              ),
+      );
+    },
   );
 }
 

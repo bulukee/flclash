@@ -56,8 +56,9 @@ String salmonFriendlyError(Object error, {String fallback = '操作失败，请�
 
 class SalmonRemoteConfig {
   final List<String> urls;
+  final String? customerServiceUrl;
 
-  const SalmonRemoteConfig({required this.urls});
+  const SalmonRemoteConfig({required this.urls, this.customerServiceUrl});
 
   factory SalmonRemoteConfig.parse(String source) {
     final json = decodeSalmonConfigSource(source);
@@ -83,8 +84,27 @@ class SalmonRemoteConfig {
     if (normalizedUrls.isEmpty) {
       throw const FormatException('No valid HTTPS URL');
     }
-    return SalmonRemoteConfig(urls: normalizedUrls);
+    final customerService = json['customerService'];
+    return SalmonRemoteConfig(
+      urls: normalizedUrls,
+      customerServiceUrl: customerService is Map
+          ? _validatedSupportUrl(customerService['url'])
+          : null,
+    );
   }
+}
+
+String? _validatedSupportUrl(dynamic value) {
+  if (value is! String) return null;
+  final url = value.trim();
+  final uri = Uri.tryParse(url);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  return url;
 }
 
 Map<String, dynamic> decodeSalmonConfigSource(String source) {
@@ -134,6 +154,7 @@ class SalmonService {
   static const _subscribeUrlKey = 'salmon_subscribe_url';
   static const _baseUrlsCacheKey = 'salmon_base_urls_cache';
   static const _baseUrlsCacheAtKey = 'salmon_base_urls_cache_at';
+  static const _customerServiceUrlKey = 'salmon_customer_service_url';
   static const _plansDataCacheKey = 'salmon_plans_data_cache';
   static const _userDataCacheKey = 'salmon_user_data_cache';
   static const _subscribeDataCacheKey = 'salmon_subscribe_data_cache';
@@ -147,10 +168,11 @@ class SalmonService {
   static const _chatContactKey = 'salmon_chatwoot_contact';
   static const _chatConversationKey = 'salmon_chatwoot_conversation';
   static const _chatEmailKey = 'salmon_chatwoot_email';
-  static const _chatBaseUrl = 'https://chat.swywl.com';
-  static const _chatInbox = '8SpSTtNMSfp64U8wevUS7wZ7';
+  static const _chatScopeKey = 'salmon_chatwoot_scope';
 
   final Dio _dio;
+  String _supportUrl = salmonSupportUrl;
+  String _chatSessionUrl = salmonSupportUrl;
   final ValueNotifier<int> sessionRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> membershipRevision = ValueNotifier<int>(0);
 
@@ -170,6 +192,9 @@ class SalmonService {
 
   Future<List<String>> fetchBaseUrls({bool forceRefresh = false}) async {
     final preferences = await SharedPreferences.getInstance();
+    _supportUrl =
+        _validatedSupportUrl(preferences.getString(_customerServiceUrlKey)) ??
+        salmonSupportUrl;
     final cachedRaw = preferences.getString(_baseUrlsCacheKey);
     var cached = <String>[];
     if (cachedRaw != null) {
@@ -199,18 +224,27 @@ class SalmonService {
             headers: const {'Cache-Control': 'no-cache'},
           ),
         );
-        final urls = SalmonRemoteConfig.parse(response.data ?? '').urls;
-        await preferences.setString(_baseUrlsCacheKey, jsonEncode(urls));
+        final config = SalmonRemoteConfig.parse(response.data ?? '');
+        if (config.customerServiceUrl case final supportUrl?) {
+          await preferences.setString(_customerServiceUrlKey, supportUrl);
+          _supportUrl = supportUrl;
+        }
+        await preferences.setString(_baseUrlsCacheKey, jsonEncode(config.urls));
         await preferences.setInt(
           _baseUrlsCacheAtKey,
           DateTime.now().millisecondsSinceEpoch,
         );
-        return urls;
+        return config.urls;
       } catch (_) {
         // Try the next remote configuration source.
       }
     }
     return cached;
+  }
+
+  Future<String> fetchSupportUrl({bool forceRefresh = false}) async {
+    await fetchBaseUrls(forceRefresh: forceRefresh);
+    return _supportUrl;
   }
 
   Future<void> sendEmailCode(String email) async {
@@ -934,10 +968,18 @@ class SalmonService {
     if (normalizedEmail.isEmpty) {
       throw StateError('无法确认当前账号，请重新登录后联系客服');
     }
+    _chatSessionUrl = await fetchSupportUrl();
+    final scope = '$_chatBaseUrl/$_chatInbox';
+    final defaultUri = Uri.parse(salmonSupportUrl);
+    final defaultScope =
+        '${defaultUri.origin}/${defaultUri.queryParameters['website_token']}';
     final storedEmail = preferences.getString(_chatEmailKey);
-    if (storedEmail == null || storedEmail != normalizedEmail) {
+    final storedScope = preferences.getString(_chatScopeKey);
+    if (storedEmail != normalizedEmail ||
+        (storedScope ?? defaultScope) != scope) {
       await clearChatwootSession();
     }
+    await preferences.setString(_chatScopeKey, scope);
     var sourceId = preferences.getString(_chatContactKey);
     var conversationId = preferences.getInt(_chatConversationKey);
     if (sourceId != null && sourceId.isNotEmpty && conversationId != null) {
@@ -1005,6 +1047,17 @@ class SalmonService {
     await preferences.remove(_chatContactKey);
     await preferences.remove(_chatConversationKey);
     await preferences.remove(_chatEmailKey);
+    await preferences.remove(_chatScopeKey);
+  }
+
+  String get _chatBaseUrl => Uri.parse(_chatSessionUrl).origin;
+
+  String get _chatInbox {
+    final token = Uri.parse(_chatSessionUrl).queryParameters['website_token'];
+    if (token == null || token.trim().isEmpty) {
+      throw StateError('当前客服地址不支持 Chatwoot 会话接口，请打开客服页面');
+    }
+    return Uri.encodeComponent(token);
   }
 
   String _chatMessagesUrl(String sourceId, int conversationId) =>
@@ -1417,6 +1470,7 @@ class SalmonService {
     await preferences.remove(_chatContactKey);
     await preferences.remove(_chatConversationKey);
     await preferences.remove(_chatEmailKey);
+    await preferences.remove(_chatScopeKey);
     salmonAccountCache = null;
     salmonNoticeCache = null;
     salmonPlansCache = null;
