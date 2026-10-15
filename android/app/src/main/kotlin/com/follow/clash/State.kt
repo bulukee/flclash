@@ -22,6 +22,15 @@ object State {
 
     val runLock = Mutex()
 
+    @Volatile
+    var shouldBeRunning: Boolean = false
+
+    @Volatile
+    private var hasExplicitRunIntent: Boolean = false
+
+    @Volatile
+    private var isStartingService: Boolean = false
+
     var runTime: Long = 0
 
     var sharedState: SharedState = SharedState()
@@ -53,6 +62,9 @@ object State {
             try {
                 Service.bind()
                 runTime = Service.getRunTime()
+                if (!hasExplicitRunIntent) {
+                    shouldBeRunning = runTime != 0L
+                }
                 val runState = when (runTime == 0L) {
                     true -> RunState.STOP
                     false -> RunState.START
@@ -64,8 +76,29 @@ object State {
         }
     }
 
+    fun handleServiceDisconnected(): Boolean {
+        val wasRunning = shouldBeRunning && runStateFlow.value != RunState.STOP
+        runStateFlow.tryEmit(RunState.STOP)
+        return wasRunning
+    }
+
+    suspend fun recoverService(): Boolean {
+        return runLock.withLock {
+            if (!shouldBeRunning) return@withLock false
+            try {
+                setupAndStart()
+                shouldBeRunning
+            } catch (_: Exception) {
+                runStateFlow.tryEmit(RunState.STOP)
+                false
+            }
+        }
+    }
+
     suspend fun handleStartServiceAction() {
         runLock.withLock {
+            shouldBeRunning = true
+            hasExplicitRunIntent = true
             if (runStateFlow.value != RunState.STOP) {
                 return
             }
@@ -79,8 +112,13 @@ object State {
     }
 
     suspend fun handleStopServiceAction() {
+        shouldBeRunning = false
+        hasExplicitRunIntent = true
+        if (isStartingService) return
         runLock.withLock {
-            if (runStateFlow.value != RunState.START) {
+            if (runStateFlow.value != RunState.START &&
+                runStateFlow.value != RunState.PENDING
+            ) {
                 return
             }
             tilePlugin?.handleStop()
@@ -93,6 +131,8 @@ object State {
     }
 
     fun handleStartService() {
+        shouldBeRunning = true
+        hasExplicitRunIntent = true
         val appPlugin = flutterEngine?.plugin<AppPlugin>()
         if (appPlugin != null) {
             appPlugin.requestNotificationsPermission {
@@ -106,7 +146,7 @@ object State {
     private fun startServiceWithPref() {
         GlobalState.launch {
             runLock.withLock {
-                if (runStateFlow.value != RunState.STOP) {
+                if (!shouldBeRunning || runStateFlow.value != RunState.STOP) {
                     return@launch
                 }
                 sharedState = GlobalState.application.sharedState
@@ -136,7 +176,7 @@ object State {
         initParams["version"] = android.os.Build.VERSION.SDK_INT
         val initParamsString = Gson().toJson(initParams)
         val setupParamsString = Gson().toJson(sharedState.setupParams)
-        Service.quickSetup(
+        val result = Service.quickSetup(
             initParamsString,
             setupParamsString,
             onStarted = {
@@ -148,31 +188,49 @@ object State {
                 }
             },
         )
+        result.getOrElse { throw it }
     }
 
     private fun startService() {
         GlobalState.launch {
             runLock.withLock {
-                if (runStateFlow.value != RunState.STOP) {
+                if (!shouldBeRunning || runStateFlow.value != RunState.STOP) {
                     return@launch
                 }
+                if (isStartingService) return@launch
+                isStartingService = true
                 try {
                     runStateFlow.tryEmit(RunState.PENDING)
                     val options = sharedState.vpnOptions ?: return@launch
                     appPlugin?.let {
                         it.prepare(options.enable) {
-                            runTime = Service.startService(options, runTime)
-                            runStateFlow.tryEmit(RunState.START)
+                            if (!shouldBeRunning) return@prepare
+                            val startedAt = Service.startService(options, runTime)
+                            if (shouldBeRunning) {
+                                runTime = startedAt
+                                runStateFlow.tryEmit(RunState.START)
+                            } else {
+                                runTime = Service.stopService()
+                                runStateFlow.tryEmit(RunState.STOP)
+                            }
                         }
                     } ?: run {
                         val intent = VpnService.prepare(GlobalState.application)
                         if (intent != null) {
                             return@launch
                         }
-                        runTime = Service.startService(options, runTime)
-                        runStateFlow.tryEmit(RunState.START)
+                        if (!shouldBeRunning) return@launch
+                        val startedAt = Service.startService(options, runTime)
+                        if (shouldBeRunning) {
+                            runTime = startedAt
+                            runStateFlow.tryEmit(RunState.START)
+                        } else {
+                            runTime = Service.stopService()
+                            runStateFlow.tryEmit(RunState.STOP)
+                        }
                     }
                 } finally {
+                    isStartingService = false
                     if (runStateFlow.value == RunState.PENDING) {
                         runStateFlow.tryEmit(RunState.STOP)
                     }
@@ -182,9 +240,14 @@ object State {
     }
 
     fun handleStopService() {
+        shouldBeRunning = false
+        hasExplicitRunIntent = true
+        if (isStartingService) return
         GlobalState.launch {
             runLock.withLock {
-                if (runStateFlow.value != RunState.START) {
+                if (runStateFlow.value != RunState.START &&
+                    runStateFlow.value != RunState.PENDING
+                ) {
                     return@launch
                 }
                 try {
@@ -193,7 +256,9 @@ object State {
                     runStateFlow.tryEmit(RunState.STOP)
                 } finally {
                     if (runStateFlow.value == RunState.PENDING) {
-                        runStateFlow.tryEmit(RunState.START)
+                        runStateFlow.tryEmit(
+                            if (shouldBeRunning) RunState.START else RunState.STOP
+                        )
                     }
                 }
             }

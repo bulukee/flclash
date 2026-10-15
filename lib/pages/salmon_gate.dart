@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -63,29 +65,40 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
           break;
         }
       }
-      var synced = false;
-      if (session.subscribeUrl.isNotEmpty) {
-        try {
-          await _syncProfile(session.subscribeUrl);
-          synced = true;
-        } catch (error) {
-          debugPrint('Subscription sync skipped: $error');
-        }
-      }
       // Never expose a managed profile left by another account. The cached
       // profile is only safe when it belongs to this exact subscription URL.
-      if (!synced &&
-          cachedProfile != null &&
-          cachedProfile.url == session.subscribeUrl) {
+      if (cachedProfile != null && cachedProfile.url == session.subscribeUrl) {
         ref.read(currentProfileIdProvider.notifier).value = cachedProfile.id;
         ref
             .read(setupActionProvider.notifier)
             .applyProfileDebounce(force: false, silence: true);
+      } else if (cachedProfile != null &&
+          ref.read(currentProfileIdProvider) == cachedProfile.id) {
+        ref.read(currentProfileIdProvider.notifier).value = null;
+        ref.read(setupActionProvider.notifier).updateStatus(false);
       }
       _setStatus(_SalmonGateStatus.ready);
+      unawaited(_refreshSessionAfterEntry(session));
     } catch (error) {
       debugPrint('Session restore failed: $error');
       _setStatus(_SalmonGateStatus.login);
+    }
+  }
+
+  Future<void> _refreshSessionAfterEntry(SalmonSession restoredSession) async {
+    try {
+      final session = await salmonService.refreshSession(
+        expectedAuthData: restoredSession.authData,
+        expectedGeneration: restoredSession.generation,
+      );
+      if (!mounted || session == null || session.subscribeUrl.isEmpty) return;
+      try {
+        await _syncProfile(session.subscribeUrl);
+      } catch (error) {
+        debugPrint('Background subscription sync skipped: $error');
+      }
+    } catch (error) {
+      debugPrint('Background session refresh skipped: $error');
     }
   }
 
@@ -150,6 +163,12 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
         context,
       ).showSnackBar(const SnackBar(content: Text('页面暂时无法打开，请稍后重试')));
     }
+  }
+
+  Future<void> _openCustomerService() async {
+    final supportUrl = await salmonService.fetchSupportUrl();
+    if (!mounted) return;
+    await _openLink(supportUrl);
   }
 
   Future<void> _syncProfile(String subscribeUrl) async {
@@ -365,8 +384,7 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
                               children: [
                                 Expanded(
                                   child: OutlinedButton.icon(
-                                    onPressed: () =>
-                                        _openLink(salmonSupportUrl),
+                                    onPressed: _openCustomerService,
                                     icon: const Icon(
                                       Icons.support_agent_rounded,
                                     ),

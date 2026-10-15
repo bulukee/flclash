@@ -1,5 +1,7 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/providers/config.dart';
+import 'package:fl_clash/services/salmon_update_service.dart';
+import 'package:fl_clash/state.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -268,6 +270,37 @@ class AutoCheckUpdateItem extends ConsumerWidget {
   }
 }
 
+class ClientUpdateItem extends StatelessWidget {
+  const ClientUpdateItem({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: SalmonUpdateService.updateAvailable,
+      builder: (_, available, __) {
+        return ListItem(
+          leading: const Icon(Icons.system_update_alt_rounded),
+          title: const Text('客户端更新'),
+          subtitle: Text('当前版本 ${globalState.packageInfo.version}'),
+          trailing: available
+              ? Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                )
+              : null,
+          onTap: () {
+            SalmonUpdateService.checkAndPrompt(context, manual: true);
+          },
+        );
+      },
+    );
+  }
+}
+
 class ApplicationSettingView extends StatelessWidget {
   const ApplicationSettingView({super.key});
 
@@ -286,6 +319,8 @@ class ApplicationSettingView extends StatelessWidget {
       const CloseConnectionsItem(),
       const UsageItem(),
       const AutoCheckUpdateItem(),
+      if (system.isAndroid || system.isWindows || system.isMacOS)
+        const ClientUpdateItem(),
     ];
     return BaseScaffold(
       title: context.appLocalizations.application,

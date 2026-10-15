@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/core.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -5,6 +7,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/state.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -19,6 +22,7 @@ class AndroidManager extends ConsumerStatefulWidget {
 
 class _AndroidContainerState extends ConsumerState<AndroidManager>
     with ServiceListener {
+  bool _recovering = false;
   @override
   void initState() {
     super.initState();
@@ -59,6 +63,29 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
       CoreEvent(type: CoreEventType.crash, data: message),
     );
     super.onServiceCrash(message);
+  }
+
+  @override
+  void onServiceRecovered() {
+    if (!_recovering) {
+      unawaited(_recoverCoreState());
+    }
+    super.onServiceRecovered();
+  }
+
+  Future<void> _recoverCoreState() async {
+    if (_recovering) return;
+    _recovering = true;
+    try {
+      final recovered = await ref
+          .read(coreActionProvider.notifier)
+          .recoverCore();
+      if (!recovered && mounted) {
+        globalState.showNotifier('代理核心恢复失败，请重试');
+      }
+    } finally {
+      _recovering = false;
+    }
   }
 
   @override

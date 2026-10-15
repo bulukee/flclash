@@ -27,9 +27,7 @@ class SalmonDnsResolver {
         host,
       ).timeout(const Duration(seconds: 2));
       if (addresses.isNotEmpty) return addresses;
-    } on SocketException {
-      return _resolveEncrypted(host);
-    } on TimeoutException {
+    } catch (_) {
       return _resolveEncrypted(host);
     }
     return _resolveEncrypted(host);

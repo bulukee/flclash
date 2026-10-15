@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -54,10 +55,21 @@ String salmonFriendlyError(Object error, {String fallback = '操作失败，请�
   return raw;
 }
 
+class SalmonSessionExpiredException extends StateError {
+  SalmonSessionExpiredException() : super('Session expired');
+}
+
+class _SalmonRequestResult {
+  final dynamic data;
+
+  const _SalmonRequestResult(this.data);
+}
+
 class SalmonRemoteConfig {
   final List<String> urls;
+  final String? customerServiceUrl;
 
-  const SalmonRemoteConfig({required this.urls});
+  const SalmonRemoteConfig({required this.urls, this.customerServiceUrl});
 
   factory SalmonRemoteConfig.parse(String source) {
     final json = decodeSalmonConfigSource(source);
@@ -83,8 +95,27 @@ class SalmonRemoteConfig {
     if (normalizedUrls.isEmpty) {
       throw const FormatException('No valid HTTPS URL');
     }
-    return SalmonRemoteConfig(urls: normalizedUrls);
+    final customerService = json['customerService'];
+    return SalmonRemoteConfig(
+      urls: normalizedUrls,
+      customerServiceUrl: customerService is Map
+          ? _validatedSupportUrl(customerService['url'])
+          : null,
+    );
   }
+}
+
+String? _validatedSupportUrl(dynamic value) {
+  if (value is! String) return null;
+  final url = value.trim();
+  final uri = Uri.tryParse(url);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  return url;
 }
 
 Map<String, dynamic> decodeSalmonConfigSource(String source) {
@@ -120,11 +151,13 @@ class SalmonSession {
   final String baseUrl;
   final String authData;
   final String subscribeUrl;
+  final int generation;
 
   const SalmonSession({
     required this.baseUrl,
     required this.authData,
     required this.subscribeUrl,
+    this.generation = 0,
   });
 }
 
@@ -134,6 +167,7 @@ class SalmonService {
   static const _subscribeUrlKey = 'salmon_subscribe_url';
   static const _baseUrlsCacheKey = 'salmon_base_urls_cache';
   static const _baseUrlsCacheAtKey = 'salmon_base_urls_cache_at';
+  static const _customerServiceUrlKey = 'salmon_customer_service_url';
   static const _plansDataCacheKey = 'salmon_plans_data_cache';
   static const _userDataCacheKey = 'salmon_user_data_cache';
   static const _subscribeDataCacheKey = 'salmon_subscribe_data_cache';
@@ -147,10 +181,13 @@ class SalmonService {
   static const _chatContactKey = 'salmon_chatwoot_contact';
   static const _chatConversationKey = 'salmon_chatwoot_conversation';
   static const _chatEmailKey = 'salmon_chatwoot_email';
-  static const _chatBaseUrl = 'https://chat.swywl.com';
-  static const _chatInbox = '8SpSTtNMSfp64U8wevUS7wZ7';
+  static const _chatScopeKey = 'salmon_chatwoot_scope';
+  static int _sessionGeneration = 0;
 
   final Dio _dio;
+  static Future<void> _sessionMutation = Future<void>.value();
+  String _supportUrl = salmonSupportUrl;
+  String _chatSessionUrl = salmonSupportUrl;
   final ValueNotifier<int> sessionRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> membershipRevision = ValueNotifier<int>(0);
 
@@ -170,6 +207,9 @@ class SalmonService {
 
   Future<List<String>> fetchBaseUrls({bool forceRefresh = false}) async {
     final preferences = await SharedPreferences.getInstance();
+    _supportUrl =
+        _validatedSupportUrl(preferences.getString(_customerServiceUrlKey)) ??
+        salmonSupportUrl;
     final cachedRaw = preferences.getString(_baseUrlsCacheKey);
     var cached = <String>[];
     if (cachedRaw != null) {
@@ -199,18 +239,27 @@ class SalmonService {
             headers: const {'Cache-Control': 'no-cache'},
           ),
         );
-        final urls = SalmonRemoteConfig.parse(response.data ?? '').urls;
-        await preferences.setString(_baseUrlsCacheKey, jsonEncode(urls));
+        final config = SalmonRemoteConfig.parse(response.data ?? '');
+        if (config.customerServiceUrl case final supportUrl?) {
+          await preferences.setString(_customerServiceUrlKey, supportUrl);
+          _supportUrl = supportUrl;
+        }
+        await preferences.setString(_baseUrlsCacheKey, jsonEncode(config.urls));
         await preferences.setInt(
           _baseUrlsCacheAtKey,
           DateTime.now().millisecondsSinceEpoch,
         );
-        return urls;
+        return config.urls;
       } catch (_) {
         // Try the next remote configuration source.
       }
     }
     return cached;
+  }
+
+  Future<String> fetchSupportUrl({bool forceRefresh = false}) async {
+    await fetchBaseUrls(forceRefresh: forceRefresh);
+    return _supportUrl;
   }
 
   Future<void> sendEmailCode(String email) async {
@@ -245,8 +294,13 @@ class SalmonService {
       authData: authData,
       subscribeUrl: '',
     );
-    await _save(session);
-    return session;
+    final generation = await _save(session);
+    return SalmonSession(
+      baseUrl: session.baseUrl,
+      authData: session.authData,
+      subscribeUrl: session.subscribeUrl,
+      generation: generation,
+    );
   }
 
   Future<void> resetPassword({
@@ -311,33 +365,111 @@ class SalmonService {
   }
 
   Future<SalmonSession?> restore() async {
+    final generation = _sessionGeneration;
     final preferences = await SharedPreferences.getInstance();
     final authData = preferences.getString(_authDataKey);
     if (authData == null || authData.isEmpty) return null;
     final cachedBaseUrl = preferences.getString(_baseUrlKey);
     final cachedSubscribeUrl = preferences.getString(_subscribeUrlKey);
-    final candidates = await _apiCandidates();
-    for (final baseUrl in candidates) {
+
+    if (cachedBaseUrl != null &&
+        _supportedApiCandidates([cachedBaseUrl]).isNotEmpty &&
+        await _isCurrentSession(authData, generation)) {
+      return SalmonSession(
+        baseUrl: cachedBaseUrl,
+        authData: authData,
+        subscribeUrl: cachedSubscribeUrl ?? '',
+        generation: generation,
+      );
+    }
+
+    return refreshSession(
+      expectedAuthData: authData,
+      expectedGeneration: generation,
+    );
+  }
+
+  Future<SalmonSession?> refreshSession({
+    String? expectedAuthData,
+    int? expectedGeneration,
+  }) async {
+    final generation = _sessionGeneration;
+    if (expectedGeneration != null && expectedGeneration != generation) {
+      return null;
+    }
+    final preferences = await SharedPreferences.getInstance();
+    final authData = preferences.getString(_authDataKey);
+    if (authData == null ||
+        authData.isEmpty ||
+        (expectedAuthData != null && authData != expectedAuthData)) {
+      return null;
+    }
+    final cachedBaseUrl = preferences.getString(_baseUrlKey);
+    final cachedSubscribeUrl = preferences.getString(_subscribeUrlKey);
+    final candidates = await _cachedLoginCandidates();
+    final attempted = <String>{};
+    var credentialFailures = 0;
+    var networkFailures = 0;
+    var otherFailures = 0;
+
+    Future<SalmonSession?> tryCandidate(String baseUrl) async {
+      attempted.add(baseUrl);
+      if (!await _isCurrentSession(authData, generation)) return null;
       try {
         final subscribeUrl = await _getSubscribeUrl(baseUrl, authData);
         final session = SalmonSession(
           baseUrl: baseUrl,
           authData: authData,
           subscribeUrl: subscribeUrl,
+          generation: generation,
         );
-        await _save(session);
-        return session;
+        return await _saveIfCurrent(session, authData, generation)
+            ? session
+            : null;
+      } on DioException catch (error) {
+        final status = error.response?.statusCode;
+        if (_isSessionExpiredStatus(status)) {
+          credentialFailures++;
+        } else if (_isTransientStatus(status) || status == null) {
+          networkFailures++;
+        } else {
+          otherFailures++;
+        }
       } catch (_) {
-        continue;
+        otherFailures++;
       }
+      return null;
+    }
+
+    for (final baseUrl in candidates) {
+      final session = await tryCandidate(baseUrl);
+      if (session != null) return session;
+    }
+
+    // Only pay the remote-config timeout after all locally known endpoints
+    // have failed. This keeps app entry responsive during a config outage.
+    if (networkFailures > 0 || otherFailures > 0) {
+      final refreshed = await _apiCandidates(forceRefresh: true);
+      for (final baseUrl in refreshed) {
+        if (attempted.contains(baseUrl)) continue;
+        final session = await tryCandidate(baseUrl);
+        if (session != null) return session;
+      }
+    }
+    if (credentialFailures > 0 && networkFailures == 0 && otherFailures == 0) {
+      await clear(expectedAuthData: authData, expectedGeneration: generation);
+      return null;
     }
     // Network failures must not log the user out. Keep the last successful
     // subscription and session until the user explicitly chooses to sign out.
-    if (cachedBaseUrl != null && cachedBaseUrl.isNotEmpty) {
+    if (cachedBaseUrl != null &&
+        cachedBaseUrl.isNotEmpty &&
+        await _isCurrentSession(authData, generation)) {
       return SalmonSession(
         baseUrl: cachedBaseUrl,
         authData: authData,
         subscribeUrl: cachedSubscribeUrl ?? '',
+        generation: generation,
       );
     }
     return null;
@@ -370,8 +502,13 @@ class SalmonService {
           authData: authData,
           subscribeUrl: subscribeUrl,
         );
-        await _save(session);
-        return session;
+        final generation = await _save(session);
+        return SalmonSession(
+          baseUrl: session.baseUrl,
+          authData: session.authData,
+          subscribeUrl: session.subscribeUrl,
+          generation: generation,
+        );
       } on DioException catch (error) {
         debugPrint('Salmon login request failed');
         final status = error.response?.statusCode ?? 0;
@@ -536,16 +673,8 @@ class SalmonService {
             .toList();
       }
     }
-    final preferences = await SharedPreferences.getInstance();
-    final baseUrl = preferences.getString(_baseUrlKey);
-    final authData = preferences.getString(_authDataKey);
-    if (baseUrl == null || authData == null) return const [];
     try {
-      final response = await _dio.get<dynamic>(
-        '$baseUrl/api/v1/user/plan/fetch',
-        options: Options(headers: {'Authorization': authData}),
-      );
-      dynamic data = response.data is Map ? response.data['data'] : null;
+      dynamic data = await _authenticatedRequest('user/plan/fetch');
       if (data is Map && data['data'] is List) data = data['data'];
       if (data is! List) return const [];
       final value = data
@@ -554,9 +683,10 @@ class SalmonService {
           .toList();
       await _writeDataCache(_plansDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_plansDataCacheKey);
-      if (!forceRefresh && cached is List) {
+      if (_canUseStaleCache(error) && cached is List) {
         return cached
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
@@ -583,9 +713,10 @@ class SalmonService {
       final value = Map<String, dynamic>.from(data);
       await _writeDataCache(_userDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_userDataCacheKey);
-      if (!forceRefresh && cached is Map)
+      if (_canUseStaleCache(error) && cached is Map)
         return Map<String, dynamic>.from(cached);
       rethrow;
     }
@@ -608,9 +739,10 @@ class SalmonService {
       final value = Map<String, dynamic>.from(data);
       await _writeDataCache(_subscribeDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_subscribeDataCacheKey);
-      if (!forceRefresh && cached is Map) {
+      if (_canUseStaleCache(error) && cached is Map) {
         return Map<String, dynamic>.from(cached);
       }
       rethrow;
@@ -642,9 +774,10 @@ class SalmonService {
           .toList();
       await _writeDataCache(_paymentsDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_paymentsDataCacheKey);
-      if (!forceRefresh && cached is List) {
+      if (cached is List) {
         return cached
             .whereType<Map>()
             .map((e) => Map<String, dynamic>.from(e))
@@ -679,7 +812,8 @@ class SalmonService {
           .toList();
       await _writeDataCache(_ordersDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_ordersDataCacheKey);
       if (cached is List)
         return cached
@@ -705,7 +839,8 @@ class SalmonService {
       final value = Map<String, dynamic>.from(data);
       await _writeDataCache(_invitesDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_invitesDataCacheKey);
       if (cached is Map) return Map<String, dynamic>.from(cached);
       rethrow;
@@ -738,7 +873,8 @@ class SalmonService {
         dynamic data = await _authenticatedRequest(path);
         if (data is Map && data['data'] is Map) data = data['data'];
         if (data is Map) result.addAll(Map<String, dynamic>.from(data));
-      } catch (_) {
+      } catch (error) {
+        if (error is SalmonSessionExpiredException) rethrow;
         // Different V2Board versions expose the commission config differently.
       }
     }
@@ -783,7 +919,8 @@ class SalmonService {
           .toList();
       await _writeDataCache(_ticketsDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_ticketsDataCacheKey);
       if (cached is List)
         return cached
@@ -840,7 +977,8 @@ class SalmonService {
           .toList();
       await _writeDataCache(_trafficDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_trafficDataCacheKey);
       if (cached is List)
         return cached
@@ -876,7 +1014,8 @@ class SalmonService {
           .toList();
       await _writeDataCache(_noticesDataCacheKey, value);
       return value;
-    } catch (_) {
+    } catch (error) {
+      if (error is SalmonSessionExpiredException) rethrow;
       final cached = await _readDataCache(_noticesDataCacheKey);
       if (cached is List) {
         return cached
@@ -934,10 +1073,18 @@ class SalmonService {
     if (normalizedEmail.isEmpty) {
       throw StateError('无法确认当前账号，请重新登录后联系客服');
     }
+    _chatSessionUrl = await fetchSupportUrl();
+    final scope = '$_chatBaseUrl/$_chatInbox';
+    final defaultUri = Uri.parse(salmonSupportUrl);
+    final defaultScope =
+        '${defaultUri.origin}/${defaultUri.queryParameters['website_token']}';
     final storedEmail = preferences.getString(_chatEmailKey);
-    if (storedEmail == null || storedEmail != normalizedEmail) {
+    final storedScope = preferences.getString(_chatScopeKey);
+    if (storedEmail != normalizedEmail ||
+        (storedScope ?? defaultScope) != scope) {
       await clearChatwootSession();
     }
+    await preferences.setString(_chatScopeKey, scope);
     var sourceId = preferences.getString(_chatContactKey);
     var conversationId = preferences.getInt(_chatConversationKey);
     if (sourceId != null && sourceId.isNotEmpty && conversationId != null) {
@@ -1005,6 +1152,17 @@ class SalmonService {
     await preferences.remove(_chatContactKey);
     await preferences.remove(_chatConversationKey);
     await preferences.remove(_chatEmailKey);
+    await preferences.remove(_chatScopeKey);
+  }
+
+  String get _chatBaseUrl => Uri.parse(_chatSessionUrl).origin;
+
+  String get _chatInbox {
+    final token = Uri.parse(_chatSessionUrl).queryParameters['website_token'];
+    if (token == null || token.trim().isEmpty) {
+      throw StateError('当前客服地址不支持 Chatwoot 会话接口，请打开客服页面');
+    }
+    return Uri.encodeComponent(token);
   }
 
   String _chatMessagesUrl(String sourceId, int conversationId) =>
@@ -1204,6 +1362,8 @@ class SalmonService {
           }
           if (status == 2) return false;
         }
+      } on SalmonSessionExpiredException {
+        rethrow;
       } catch (_) {
         // Temporary network failures should not stop payment confirmation.
       }
@@ -1239,16 +1399,25 @@ class SalmonService {
       }
     }
     final userPlan = user['plan'];
+    final resolvedPlanName =
+        currentPlan?['name']?.toString() ??
+        (userPlan is Map ? userPlan['name']?.toString() : null) ??
+        user['plan_name']?.toString() ??
+        subscription['plan_name']?.toString();
+    final hasPlanId = planId != null && planId > 0;
     final result = <String, dynamic>{
       ...user,
       ...subscription,
       'plan_name':
-          currentPlan?['name']?.toString() ??
-          (userPlan is Map ? userPlan['name']?.toString() : null) ??
-          user['plan_name']?.toString() ??
-          subscription['plan_name']?.toString() ??
-          (planId != null && planId > 0 ? '已有套餐' : '暂无套餐'),
-      'plan_quota_gb': currentPlan?['transfer_enable'],
+          resolvedPlanName == null ||
+              resolvedPlanName.isEmpty ||
+              (resolvedPlanName == '暂无套餐' && hasPlanId)
+          ? (hasPlanId ? '已有套餐' : '暂无套餐')
+          : resolvedPlanName,
+      'plan_quota_gb':
+          currentPlan?['transfer_enable'] ??
+          subscription['transfer_enable'] ??
+          user['transfer_enable'],
     };
     for (final key in [
       'reset_at',
@@ -1287,20 +1456,118 @@ class SalmonService {
     final baseUrl = preferences.getString(_baseUrlKey);
     final authData = preferences.getString(_authDataKey);
     if (baseUrl == null || authData == null) {
-      throw StateError('Session expired');
+      throw SalmonSessionExpiredException();
     }
-    final response = await _dio.request<dynamic>(
-      '$baseUrl/api/v1/$path',
-      data: body,
-      queryParameters: queryParameters,
-      options: Options(
-        method: method,
-        contentType: body == null ? null : Headers.formUrlEncodedContentType,
-        headers: {'Authorization': authData},
-      ),
-    );
-    if (response.data is Map) return response.data['data'];
-    throw StateError(_responseMessage(response.data));
+    final generation = _sessionGeneration;
+    final canFailover = method.toUpperCase() == 'GET';
+    final attempted = <String>{};
+    var credentialFailures = 0;
+    var networkFailures = 0;
+    var otherFailures = 0;
+    Object? lastError;
+
+    Future<_SalmonRequestResult?> requestFrom(String candidate) async {
+      attempted.add(candidate);
+      if (!await _isCurrentSession(authData, generation)) {
+        throw SalmonSessionExpiredException();
+      }
+      try {
+        final response = await _dio.request<dynamic>(
+          '$candidate/api/v1/$path',
+          data: body,
+          queryParameters: queryParameters,
+          options: Options(
+            method: method,
+            contentType: body == null
+                ? null
+                : Headers.formUrlEncodedContentType,
+            headers: {'Authorization': authData},
+          ),
+        );
+        if (!await _isCurrentSession(authData, generation)) {
+          throw SalmonSessionExpiredException();
+        }
+        await _promoteBaseUrl(candidate, authData, generation);
+        if (!await _isCurrentSession(authData, generation)) {
+          throw SalmonSessionExpiredException();
+        }
+        if (response.data is Map) {
+          return _SalmonRequestResult(response.data['data']);
+        }
+        throw StateError(_responseMessage(response.data));
+      } on SalmonSessionExpiredException {
+        rethrow;
+      } on DioException catch (error) {
+        final status = error.response?.statusCode;
+        if (_isSessionExpiredStatus(status)) {
+          credentialFailures++;
+        } else if (_isTransientStatus(status) || status == null) {
+          networkFailures++;
+        } else {
+          otherFailures++;
+        }
+        lastError = error;
+        if (!canFailover ||
+            (!_isSessionExpiredStatus(status) && !_isTransientStatus(status))) {
+          rethrow;
+        }
+      } catch (error) {
+        otherFailures++;
+        lastError = error;
+        if (!canFailover) rethrow;
+      }
+      return null;
+    }
+
+    final candidates = _supportedApiCandidates([
+      baseUrl,
+      if (canFailover) ...(await _cachedLoginCandidates()),
+    ]);
+    for (final candidate in candidates) {
+      final result = await requestFrom(candidate);
+      if (result != null) return result.data;
+    }
+
+    if (canFailover) {
+      final refreshed = await _apiCandidates(forceRefresh: true);
+      for (final candidate in _supportedApiCandidates(refreshed)) {
+        if (attempted.contains(candidate)) continue;
+        final result = await requestFrom(candidate);
+        if (result != null) return result.data;
+      }
+    }
+
+    if (credentialFailures > 0 && networkFailures == 0 && otherFailures == 0) {
+      await clear(expectedAuthData: authData, expectedGeneration: generation);
+      throw SalmonSessionExpiredException();
+    }
+    if (lastError != null) throw lastError!;
+    throw StateError('服务器暂时无法连接');
+  }
+
+  bool _isSessionExpiredStatus(int? status) => status == 401 || status == 419;
+
+  bool _isTransientStatus(int? status) {
+    if (status == null) return true;
+    return status == 404 || status == 408 || status == 429 || status >= 500;
+  }
+
+  bool _canUseStaleCache(Object error) =>
+      error is DioException || error is TimeoutException;
+
+  Future<void> _promoteBaseUrl(
+    String baseUrl,
+    String expectedAuthData,
+    int expectedGeneration,
+  ) async {
+    await _withSessionMutation(() async {
+      final preferences = await SharedPreferences.getInstance();
+      if (_sessionGeneration == expectedGeneration &&
+          preferences.getString(_authDataKey) == expectedAuthData &&
+          preferences.getString(_baseUrlKey) != baseUrl) {
+        await preferences.setString(_baseUrlKey, baseUrl);
+      }
+    });
   }
 
   Future<String?> _matchingPendingOrder(int planId, String cycle) async {
@@ -1397,19 +1664,80 @@ class SalmonService {
     return 'Request failed';
   }
 
-  Future<void> _save(SalmonSession session) async {
+  Future<T> _withSessionMutation<T>(Future<T> Function() action) {
+    final previous = _sessionMutation;
+    final release = Completer<void>();
+    _sessionMutation = release.future;
+    return () async {
+      await previous;
+      try {
+        return await action();
+      } finally {
+        release.complete();
+      }
+    }();
+  }
+
+  Future<bool> _isCurrentSession(String authData, int generation) async {
     final preferences = await SharedPreferences.getInstance();
+    return _sessionGeneration == generation &&
+        preferences.getString(_authDataKey) == authData;
+  }
+
+  Future<bool> _saveIfCurrent(
+    SalmonSession session,
+    String expectedAuthData,
+    int expectedGeneration,
+  ) {
+    return _withSessionMutation(() async {
+      final preferences = await SharedPreferences.getInstance();
+      if (_sessionGeneration != expectedGeneration ||
+          preferences.getString(_authDataKey) != expectedAuthData) {
+        return false;
+      }
+      await _saveUnsafe(session, preferences);
+      return true;
+    });
+  }
+
+  Future<int> _save(SalmonSession session) {
+    return _withSessionMutation(() async {
+      final preferences = await SharedPreferences.getInstance();
+      return _saveUnsafe(session, preferences, advanceGeneration: true);
+    });
+  }
+
+  Future<int> _saveUnsafe(
+    SalmonSession session,
+    SharedPreferences preferences, {
+    bool advanceGeneration = false,
+  }) async {
     final previousAuthData = preferences.getString(_authDataKey);
     if (previousAuthData != null && previousAuthData != session.authData) {
       await _clearAccountDataCaches();
     }
+    if (advanceGeneration) _sessionGeneration++;
     await preferences.setString(_baseUrlKey, session.baseUrl);
     await preferences.setString(_authDataKey, session.authData);
     await preferences.setString(_subscribeUrlKey, session.subscribeUrl);
+    return _sessionGeneration;
   }
 
-  Future<void> clear() async {
-    final preferences = await SharedPreferences.getInstance();
+  Future<void> clear({String? expectedAuthData, int? expectedGeneration}) {
+    return _withSessionMutation(() async {
+      final preferences = await SharedPreferences.getInstance();
+      if ((expectedGeneration != null &&
+              _sessionGeneration != expectedGeneration) ||
+          (expectedAuthData != null &&
+              preferences.getString(_authDataKey) != expectedAuthData)) {
+        return;
+      }
+      await _clearUnsafe(preferences);
+    });
+  }
+
+  Future<void> _clearUnsafe(SharedPreferences preferences) async {
+    _sessionGeneration++;
     await preferences.remove(_baseUrlKey);
     await preferences.remove(_authDataKey);
     await preferences.remove(_subscribeUrlKey);
@@ -1417,6 +1745,7 @@ class SalmonService {
     await preferences.remove(_chatContactKey);
     await preferences.remove(_chatConversationKey);
     await preferences.remove(_chatEmailKey);
+    await preferences.remove(_chatScopeKey);
     salmonAccountCache = null;
     salmonNoticeCache = null;
     salmonPlansCache = null;

@@ -121,10 +121,13 @@ class RemoteService : Service(),
                                 )
                             }
                         }
+                    }.onSuccess {
+                        onStarted.invoke()
+                    }.onFailure { error ->
+                        GlobalState.log("quickSetup callback failed: ${error.message}")
                     }
                 }
             }
-            onStarted()
         }
 
         override fun updateNotificationParams(params: NotificationParams?) {

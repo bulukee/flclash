@@ -52,6 +52,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   late Future<List<Map<String, dynamic>>> _notices;
   bool _testing = false;
   bool _updating = false;
+  bool _refreshing = false;
   String? _lastAutoTestNode;
   String? _selectedNode;
   bool _planWarningShown = false;
@@ -110,18 +111,12 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     _planWarningShown = true;
     try {
       final data = await _account;
-      var total = num.tryParse('${data['transfer_enable'] ?? 0}') ?? 0;
-      final quotaGb = num.tryParse('${data['plan_quota_gb'] ?? 0}') ?? 0;
-      if (quotaGb > 0) total = quotaGb * 1024 * 1024 * 1024;
-      final used =
-          (num.tryParse('${data['u'] ?? 0}') ?? 0) +
-          (num.tryParse('${data['d'] ?? 0}') ?? 0);
+      final noPlan = _hasNoPlan(data);
       final expired =
-          '${data['plan_name'] ?? ''}' == '暂无套餐' ||
-          _isExpired(data['expired_at'] ?? data['expire']);
+          !noPlan && _isExpired(data['expired_at'] ?? data['expire']);
       // A low-balance threshold is only a reminder; it must not block
       // connecting while any traffic remains.
-      if (!expired || !mounted) return;
+      if ((!noPlan && !expired) || !mounted) return;
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
@@ -136,25 +131,32 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
               shape: BoxShape.circle,
             ),
             child: Icon(
-              expired
-                  ? Icons.workspace_premium_rounded
-                  : Icons.data_usage_rounded,
+              Icons.workspace_premium_rounded,
               color: Colors.white,
               size: 34,
             ),
           ),
-          title: Text(expired ? '套餐已过期' : '本期流量已用完'),
+          title: Text(noPlan ? '未开通套餐' : '套餐已过期'),
           content: Text(
-            expired
-                ? '当前套餐已经失效，暂时无法开启加速。请前往商店续费或购买新套餐。'
-                : '本期可用流量已经使用完毕，暂时无法开启加速。请前往商店购买流量或升级套餐。',
+            noPlan
+                ? '当前账号尚未开通套餐，暂时无法开启加速。请前往商店购买套餐。'
+                : '当前套餐已经失效，暂时无法开启加速。请前往商店续费或购买新套餐。',
             textAlign: TextAlign.center,
           ),
           actionsAlignment: MainAxisAlignment.center,
           actions: [
-            FilledButton(
+            TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('我知道了'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(context);
+                Navigator.of(
+                  this.context,
+                ).push(MaterialPageRoute(builder: (_) => const PurchaseView()));
+              },
+              child: Text(noPlan ? '去购买' : '去续费'),
             ),
           ],
         ),
@@ -164,28 +166,30 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     }
   }
 
-  Future<List<Map<String, dynamic>>> _loadNotices() async {
-    final value = await salmonService.fetchNotices();
+  Future<List<Map<String, dynamic>>> _loadNotices({
+    bool forceRefresh = false,
+  }) async {
+    final value = await salmonService.fetchNotices(forceRefresh: forceRefresh);
     salmonNoticeCache = value;
     salmonNoticeCacheAt = DateTime.now();
     return value;
   }
 
   Future<void> _refreshNotices() async {
-    final value = await _loadNotices();
+    final value = await _loadNotices(forceRefresh: true);
     if (mounted) setState(() => _notices = Future.value(value));
   }
 
   Future<void> _refreshCachedAccount() async {
-    final value = await _loadAccount();
+    final value = await _loadAccount(forceRefresh: true);
     if (mounted) setState(() => _account = Future.value(value));
   }
 
-  Future<Map<String, dynamic>> _loadAccount() async {
+  Future<Map<String, dynamic>> _loadAccount({bool forceRefresh = false}) async {
     final values = await Future.wait([
-      salmonService.fetchSubscribeInfo(),
-      salmonService.fetchUserInfo(),
-      salmonService.fetchPlans(),
+      salmonService.fetchSubscribeInfo(forceRefresh: forceRefresh),
+      salmonService.fetchUserInfo(forceRefresh: forceRefresh),
+      salmonService.fetchPlans(forceRefresh: forceRefresh),
     ]);
     final subscription = Map<String, dynamic>.from(values[0] as Map);
     final user = Map<String, dynamic>.from(values[1] as Map);
@@ -205,13 +209,22 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     }
     final userPlan = user['plan'];
     final originalPlanName = subscription['plan_name']?.toString();
-    subscription['plan_name'] =
+    final resolvedPlanName =
         currentPlan?['name']?.toString() ??
         (userPlan is Map ? userPlan['name']?.toString() : null) ??
         user['plan_name']?.toString() ??
-        originalPlanName ??
-        (planId != null && planId > 0 ? '已有套餐' : '暂无套餐');
-    subscription['plan_quota_gb'] = currentPlan?['transfer_enable'];
+        originalPlanName;
+    final hasPlanId = planId != null && planId > 0;
+    subscription['plan_name'] =
+        resolvedPlanName == null ||
+            resolvedPlanName.isEmpty ||
+            (resolvedPlanName == '暂无套餐' && hasPlanId)
+        ? (hasPlanId ? '已有套餐' : '暂无套餐')
+        : resolvedPlanName;
+    subscription['plan_quota_gb'] =
+        currentPlan?['transfer_enable'] ??
+        subscription['transfer_enable'] ??
+        user['transfer_enable'];
     for (final key in [
       'reset_at',
       'reset_time',
@@ -228,9 +241,44 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     return subscription;
   }
 
+  Future<void> _refreshDashboard() async {
+    if (_refreshing || _updating) return;
+    setState(() => _refreshing = true);
+    try {
+      final account = _loadAccount(forceRefresh: true);
+      final notices = _loadNotices(forceRefresh: true);
+      if (mounted) {
+        setState(() {
+          _account = account;
+          _notices = notices;
+        });
+      }
+      await Future.wait([account, notices]);
+      await _updateNodes(silent: true);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(salmonFriendlyError(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
   Future<void> _toggleConnection() async {
     if (!ref.read(isStartProvider)) {
-      final data = await _account;
+      late final Map<String, dynamic> data;
+      try {
+        data = await _account;
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(salmonFriendlyError(error))));
+        }
+        return;
+      }
       final rawExpiry = data['expired_at'] ?? data['expire'];
       var total = num.tryParse('${data['transfer_enable'] ?? 0}') ?? 0;
       final quotaGb = num.tryParse('${data['plan_quota_gb'] ?? 0}') ?? 0;
@@ -238,17 +286,15 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
       final used =
           (num.tryParse('${data['u'] ?? 0}') ?? 0) +
           (num.tryParse('${data['d'] ?? 0}') ?? 0);
-      final expired =
-          '${data['plan_name'] ?? ''}' == '暂无套餐' || _isExpired(rawExpiry);
+      final noPlan = _hasNoPlan(data);
+      final expired = !noPlan && _isExpired(rawExpiry);
       // Do not block at the 10% reminder threshold. Only an expired plan
       // prevents starting the tunnel.
-      if (expired) {
+      if (noPlan || expired) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                expired ? '套餐已过期，请先前往商店购买或续费' : '本期流量已用完，请先购买流量或升级套餐',
-              ),
+              content: Text(noPlan ? '尚未开通套餐，请先前往商店购买' : '套餐已过期，请先前往商店购买或续费'),
             ),
           );
         }
@@ -320,7 +366,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   }
 
   Future<void> _updateNodes({bool silent = false}) async {
-    if (_updating) return;
+    if (!mounted || _updating) return;
     setState(() => _updating = true);
     try {
       final profile = ref.read(currentProfileProvider);
@@ -654,22 +700,36 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     return '${bytes.toStringAsFixed(0)} B/s';
   }
 
+  DateTime? _parseExpiry(dynamic raw) {
+    final text = '${raw ?? ''}'.trim();
+    final value = int.tryParse(text);
+    if (value != null) {
+      if (value <= 0) return null;
+      return DateTime.fromMillisecondsSinceEpoch(
+        value < 100000000000 ? value * 1000 : value,
+      );
+    }
+    final parsed = DateTime.tryParse(text);
+    if (parsed == null) return null;
+    if (parsed.hour == 0 && parsed.minute == 0 && parsed.second == 0) {
+      return DateTime(parsed.year, parsed.month, parsed.day, 23, 59, 59);
+    }
+    return parsed;
+  }
+
   String _expiry(dynamic raw) {
-    final value = int.tryParse('${raw ?? ''}');
-    if (value == null || value <= 0) return '长期有效';
-    final date = DateTime.fromMillisecondsSinceEpoch(
-      value < 100000000000 ? value * 1000 : value,
-    );
+    final date = _parseExpiry(raw);
+    if (date == null) return '长期有效';
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
   bool _isExpired(dynamic raw) {
-    final value = int.tryParse('${raw ?? ''}');
-    if (value == null || value <= 0) return false;
-    final date = DateTime.fromMillisecondsSinceEpoch(
-      value < 100000000000 ? value * 1000 : value,
-    );
-    return !date.isAfter(DateTime.now());
+    final date = _parseExpiry(raw);
+    return date != null && !date.isAfter(DateTime.now());
+  }
+
+  bool _hasNoPlan(Map<String, dynamic> data) {
+    return '${data['plan_name'] ?? ''}'.trim() == '暂无套餐';
   }
 
   @override
@@ -697,10 +757,23 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         // The desktop side rail already carries the brand. Repeating the
         // small mark here made the header look like an unrelated button.
         title: const SizedBox.shrink(),
+        actions: [
+          IconButton(
+            tooltip: '刷新首页',
+            onPressed: _refreshing || _updating ? null : _refreshDashboard,
+            icon: _refreshing || _updating
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
+          ),
+        ],
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final desktop = system.isWindows;
+          final desktop = system.isDesktop && constraints.maxWidth >= 760;
           if (desktop) {
             return Padding(
               padding: const EdgeInsets.fromLTRB(28, 12, 28, 16),
@@ -719,8 +792,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                             : fetched;
                         return _NoticeCard(
                           notices: notices,
-                          onRefresh: () =>
-                              setState(() => _notices = _loadNotices()),
+                          onRefresh: () => setState(
+                            () => _notices = _loadNotices(forceRefresh: true),
+                          ),
                         );
                       },
                     ),
@@ -769,15 +843,17 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                                 final used =
                                     (num.tryParse('${data['u'] ?? 0}') ?? 0) +
                                     (num.tryParse('${data['d'] ?? 0}') ?? 0);
+                                final noPlan = _hasNoPlan(data);
                                 final expired =
-                                    '${data['plan_name'] ?? ''}' == '暂无套餐' ||
+                                    !noPlan &&
                                     _isExpired(
                                       data['expired_at'] ?? data['expire'],
                                     );
-                                final remaining = expired
+                                final unavailable = noPlan || expired;
+                                final remaining = unavailable
                                     ? 0
                                     : (total - used).clamp(0, total);
-                                if (expired ||
+                                if (unavailable ||
                                     total <= 0 ||
                                     remaining > total * .1) {
                                   return const SizedBox.shrink();
@@ -832,8 +908,9 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                               : fetched;
                           return _NoticeCard(
                             notices: notices,
-                            onRefresh: () =>
-                                setState(() => _notices = _loadNotices()),
+                            onRefresh: () => setState(
+                              () => _notices = _loadNotices(forceRefresh: true),
+                            ),
                           );
                         },
                       ),
@@ -872,14 +949,16 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                               (num.tryParse('${data['d'] ?? 0}') ?? 0);
                           final rawExpiry =
                               data['expired_at'] ?? data['expire'];
-                          final expired =
-                              '${data['plan_name'] ?? ''}' == '暂无套餐' ||
-                              _isExpired(rawExpiry);
-                          final remaining = expired
+                          final noPlan = _hasNoPlan(data);
+                          final expired = !noPlan && _isExpired(rawExpiry);
+                          final unavailable = noPlan || expired;
+                          final remaining = unavailable
                               ? 0
                               : (total - used).clamp(0, total);
                           final lowTraffic =
-                              !expired && total > 0 && remaining <= total * .1;
+                              !unavailable &&
+                              total > 0 &&
+                              remaining <= total * .1;
                           if (desktop) return const SizedBox.shrink();
                           return Align(
                             alignment: desktop
@@ -901,14 +980,18 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                                   ),
                                   const SizedBox(height: 14),
                                   DashboardPlanSummary(
-                                    plan: expired
+                                    plan: noPlan
+                                        ? '未开通套餐'
+                                        : expired
                                         ? '套餐已过期'
                                         : '${data['plan_name'] ?? '正在获取'}',
                                     remaining: _traffic(remaining),
-                                    expiry: expired
+                                    expiry: noPlan
+                                        ? '未开通套餐'
+                                        : expired
                                         ? '套餐已过期'
                                         : _expiry(rawExpiry),
-                                    resetLabel: expired
+                                    resetLabel: unavailable
                                         ? null
                                         : salmonTrafficResetSummary(data),
                                     showResetTraffic: lowTraffic,
@@ -1250,12 +1333,7 @@ class _ConnectionHero extends StatelessWidget {
     final displayDelay = estimatedOneWayDelay(delay);
     return Container(
       constraints: BoxConstraints(minHeight: compact ? 430 : 0),
-      padding: EdgeInsets.fromLTRB(
-        20,
-        compact ? 16 : 24,
-        20,
-        compact ? 16 : 20,
-      ),
+      padding: EdgeInsets.fromLTRB(20, 16, 20, 16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(30),
         gradient: const LinearGradient(
@@ -1308,13 +1386,13 @@ class _ConnectionHero extends StatelessWidget {
               ],
             ),
           ),
-          SizedBox(height: compact ? 12 : 24),
+          const SizedBox(height: 12),
           _PowerOrb(
             connected: connected,
             onTap: onPowerTap,
-            scale: compact ? .78 : 1,
+            scale: compact ? .78 : .85,
           ),
-          SizedBox(height: compact ? 14 : 26),
+          const SizedBox(height: 14),
           if (showNode)
             Center(
               child: SizedBox(
@@ -1462,7 +1540,7 @@ class DashboardQuickStats extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final stacked =
-          constraints.maxWidth < 400 ||
+          constraints.maxWidth < 340 ||
           MediaQuery.textScalerOf(context).scale(16) > 20;
       final traffic = _StatPanel(
         icon: Icons.speed_rounded,
@@ -1478,7 +1556,13 @@ class DashboardQuickStats extends StatelessWidget {
                   color: Colors.orange.shade700,
                 ),
                 const SizedBox(width: 4),
-                Expanded(child: Text(upload)),
+                Expanded(
+                  child: Text(
+                    upload,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 4),
@@ -1490,7 +1574,13 @@ class DashboardQuickStats extends StatelessWidget {
                   color: Colors.green.shade600,
                 ),
                 const SizedBox(width: 4),
-                Expanded(child: Text(download)),
+                Expanded(
+                  child: Text(
+                    download,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ],
             ),
           ],
@@ -1558,115 +1648,137 @@ class DashboardPlanSummary extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [Color(0xFFE8F0FF), Color(0xFFEDF1FF)],
-      ),
-      borderRadius: BorderRadius.circular(30),
-      border: Border.all(color: const Color(0xFFD9E4F6)),
-      boxShadow: [
-        BoxShadow(
-          color: const Color(0xFF245CFF).withValues(alpha: .13),
-          blurRadius: 24,
-          offset: const Offset(0, 10),
-        ),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF245CFF), Color(0xFF755BFF)],
-                ),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.auto_awesome_rounded,
-                color: Colors.white,
-              ),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final compact =
+          constraints.maxWidth < 320 ||
+          MediaQuery.textScalerOf(context).scale(16) > 20;
+      final unavailable = expiry == '套餐已过期' || expiry == '未开通套餐';
+      final details = Column(
+        crossAxisAlignment: compact
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.end,
+        children: [
+          Text(
+            unavailable ? expiry : '到期 $expiry',
+            textAlign: compact ? TextAlign.start : TextAlign.end,
+            style: const TextStyle(
+              color: Color(0xFF405E86),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Wrap(
-                    children: [
-                      Text('当前套餐', style: TextStyle(color: Color(0xFF64789A))),
-                      SizedBox(width: 5),
-                      Icon(
-                        Icons.favorite_rounded,
-                        size: 13,
-                        color: Color(0xFF755BFF),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    plan,
-                    style: const TextStyle(
-                      color: Color(0xFF10233F),
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  if (showResetTraffic) ...[
-                    const SizedBox(height: 8),
-                    FilledButton.tonalIcon(
-                      onPressed: onResetTraffic,
-                      icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                      label: const Text('重置流量'),
-                    ),
-                  ],
-                ],
-              ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            unavailable ? '剩余 0 GB' : '剩余 $remaining',
+            textAlign: compact ? TextAlign.start : TextAlign.end,
+            style: const TextStyle(
+              color: Color(0xFF245CFF),
+              fontWeight: FontWeight.w900,
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+          ),
+          if (resetLabel != null) ...[
+            const SizedBox(height: 4),
             Text(
-              expiry == '套餐已过期' ? '套餐已过期' : '到期 $expiry',
+              resetLabel!,
+              textAlign: compact ? TextAlign.start : TextAlign.end,
               style: const TextStyle(
                 color: Color(0xFF405E86),
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              expiry == '套餐已过期' ? '剩余 0 GB' : '剩余 $remaining',
-              style: const TextStyle(
-                color: Color(0xFF245CFF),
-                fontWeight: FontWeight.w900,
-              ),
+          ],
+          if (showResetTraffic) ...[
+            const SizedBox(height: 8),
+            FilledButton.tonalIcon(
+              onPressed: onResetTraffic,
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('重置流量'),
             ),
-            if (resetLabel != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                resetLabel!,
-                style: const TextStyle(
-                  color: Color(0xFF405E86),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
+          ],
+        ],
+      );
+
+      final planInfo = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF245CFF), Color(0xFF755BFF)],
               ),
-            ],
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Wrap(
+                  children: [
+                    Text('当前套餐', style: TextStyle(color: Color(0xFF64789A))),
+                    SizedBox(width: 5),
+                    Icon(
+                      Icons.favorite_rounded,
+                      size: 13,
+                      color: Color(0xFF755BFF),
+                    ),
+                  ],
+                ),
+                Text(
+                  plan,
+                  maxLines: compact ? 2 : 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF10233F),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFE8F0FF), Color(0xFFEDF1FF)],
+          ),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(color: const Color(0xFFD9E4F6)),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF245CFF).withValues(alpha: .13),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
+            ),
           ],
         ),
-      ],
-    ),
+        child: compact
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [planInfo, const SizedBox(height: 12), details],
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: planInfo),
+                  const SizedBox(width: 12),
+                  Expanded(child: details),
+                ],
+              ),
+      );
+    },
   );
 }
 

@@ -2,6 +2,9 @@ name: Salmon macOS Release
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/macos-*
 
 permissions:
   contents: read
@@ -56,6 +59,28 @@ jobs:
           set -euo pipefail
           flutter config --enable-macos-desktop
           flutter pub get
+
+      - name: Verify release changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings \
+            lib/services/salmon_service.dart \
+            lib/services/salmon_dns.dart \
+            lib/services/salmon_update_service.dart \
+            lib/pages/salmon_gate.dart \
+            lib/views/account.dart \
+            lib/views/application_setting.dart \
+            lib/views/dashboard/dashboard.dart \
+            lib/manager/android_manager.dart \
+            lib/manager/core_manager.dart \
+            lib/plugins/service.dart
+          flutter test --no-pub --reporter expanded \
+            test/common/salmon_service_test.dart \
+            test/common/salmon_dns_test.dart \
+            test/common/salmon_update_service_test.dart \
+            test/widgets/salmon_dashboard_layout_test.dart \
+            test/widgets/salmon_node_timeout_test.dart
 
       - name: Build DMG
         shell: bash

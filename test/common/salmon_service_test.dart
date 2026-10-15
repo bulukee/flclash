@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -51,6 +52,123 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test(
+    'parses the optional customer service URL without changing API URLs',
+    () {
+      const supportUrl =
+          'https://support.example.com/widget?website_token=new-inbox#/';
+      final config = SalmonRemoteConfig.parse(
+        jsonEncode({
+          'urls': ['https://main.example.com'],
+          'customerService': {'url': supportUrl},
+          'updates': {
+            'android': {'versionName': '1.2.11'},
+          },
+          'releaseNotes': ['Update'],
+        }),
+      );
+
+      expect(config.urls, ['https://main.example.com']);
+      expect(config.customerServiceUrl, supportUrl);
+      expect(
+        SalmonRemoteConfig.parse(
+          '{"urls":["https://main.example.com"]}',
+        ).customerServiceUrl,
+        isNull,
+      );
+    },
+  );
+
+  for (final supportUrl in [
+    'http://support.example.com',
+    'javascript:alert(1)',
+    'https://user:password@support.example.com',
+    '',
+  ]) {
+    test('ignores an unsafe customer service URL: $supportUrl', () {
+      final config = SalmonRemoteConfig.parse(
+        jsonEncode({
+          'urls': ['https://main.example.com'],
+          'customerService': {'url': supportUrl},
+        }),
+      );
+
+      expect(config.customerServiceUrl, isNull);
+      expect(config.urls, ['https://main.example.com']);
+    });
+  }
+
+  test(
+    'caches the customer service URL for offline use after restart',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      const supportUrl =
+          'https://support.example.com/widget?website_token=new-inbox#/';
+      var offline = false;
+      var configRequests = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              configRequests++;
+              if (offline) {
+                handler.reject(DioException(requestOptions: options));
+                return;
+              }
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: jsonEncode({
+                    'urls': ['https://main.example.com'],
+                    'customerService': {'url': supportUrl},
+                  }),
+                ),
+              );
+            },
+          ),
+        );
+
+      expect(await SalmonService(dio: dio).fetchSupportUrl(), supportUrl);
+      expect(await SalmonService(dio: dio).fetchSupportUrl(), supportUrl);
+      expect(configRequests, 1);
+      offline = true;
+      expect(
+        await SalmonService(dio: dio).fetchSupportUrl(forceRefresh: true),
+        supportUrl,
+      );
+      expect(configRequests, 1 + salmonConfigUrls.length);
+    },
+  );
+
+  test(
+    'missing customer service config keeps the default or last URL',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) => handler.resolve(
+              Response(
+                requestOptions: options,
+                data: '{"urls":["https://main.example.com"]}',
+              ),
+            ),
+          ),
+        );
+
+      expect(await SalmonService(dio: dio).fetchSupportUrl(), salmonSupportUrl);
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(
+        'salmon_customer_service_url',
+        'https://support.example.com',
+      );
+      expect(
+        await SalmonService(dio: dio).fetchSupportUrl(forceRefresh: true),
+        'https://support.example.com',
+      );
+    },
+  );
 
   test('parses a Base64-encoded JSON document', () {
     final source = base64Encode(
@@ -111,6 +229,34 @@ void main() {
         'https://saved.example.com/api/v1/passport/auth/login',
       );
       expect(requests, hasLength(2));
+    },
+  );
+
+  test(
+    'restore returns the cached session before network validation',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'salmon_base_url': 'https://saved.example.com',
+        'salmon_auth_data': 'session-token',
+        'salmon_subscribe_url': 'https://saved.example.com/sub',
+      });
+      var requests = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requests++;
+              handler.reject(DioException(requestOptions: options));
+            },
+          ),
+        );
+
+      final session = await SalmonService(dio: dio).restore();
+
+      expect(session?.baseUrl, 'https://saved.example.com');
+      expect(session?.authData, 'session-token');
+      expect(session?.subscribeUrl, 'https://saved.example.com/sub');
+      expect(requests, 0);
     },
   );
 
@@ -251,6 +397,158 @@ void main() {
     expect(requests.last, 'https://fresh.example.com/api/v1/user/getSubscribe');
   });
 
+  test('in-flight refresh cannot restore a session after logout', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_base_url': 'https://saved.example.com',
+      'salmon_auth_data': 'old-token',
+      'salmon_subscribe_url': 'https://saved.example.com/old-sub',
+      'salmon_base_urls_cache': jsonEncode(['https://saved.example.com']),
+      'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requestStarted = Completer<void>();
+    final completeRequest = Completer<void>();
+    var delayedRequestSeen = false;
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) async {
+            if (!delayedRequestSeen &&
+                options.uri.path.endsWith('/user/getSubscribe') &&
+                options.headers['Authorization'] == 'old-token') {
+              delayedRequestSeen = true;
+              requestStarted.complete();
+              await completeRequest.future;
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'data': {'subscribe_url': '/new-sub'},
+                  },
+                ),
+              );
+              return;
+            }
+            if (options.uri.path.endsWith('/passport/auth/login')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'data': {'auth_data': 'new-token'},
+                  },
+                ),
+              );
+            } else if (options.uri.path.endsWith('/user/getSubscribe') &&
+                options.headers['Authorization'] == 'new-token') {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'data': {'subscribe_url': '/new-sub'},
+                  },
+                ),
+              );
+            } else {
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  response: Response(requestOptions: options, statusCode: 401),
+                  type: DioExceptionType.badResponse,
+                ),
+              );
+            }
+          },
+        ),
+      );
+    final service = SalmonService(dio: dio);
+    final refresh = service.refreshSession();
+
+    await requestStarted.future;
+    await service.clear();
+    completeRequest.complete();
+
+    expect(await refresh, isNull);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('salmon_auth_data'), isNull);
+    expect(preferences.getString('salmon_base_url'), isNull);
+  });
+
+  test('stale refresh failure cannot clear a same-token re-login', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_base_url': salmonBootstrapBaseUrl,
+      'salmon_auth_data': 'old-token',
+      'salmon_base_urls_cache': jsonEncode([salmonBootstrapBaseUrl]),
+      'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final requestStarted = Completer<void>();
+    final completeRequest = Completer<void>();
+    var delayedRequestSeen = false;
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) async {
+            if (!delayedRequestSeen &&
+                options.uri.path.endsWith('/user/getSubscribe') &&
+                options.headers['Authorization'] == 'old-token') {
+              delayedRequestSeen = true;
+              requestStarted.complete();
+              await completeRequest.future;
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  response: Response(requestOptions: options, statusCode: 401),
+                  type: DioExceptionType.badResponse,
+                ),
+              );
+              return;
+            }
+            if (options.uri.path.endsWith('/passport/auth/login')) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'data': {'auth_data': 'old-token'},
+                  },
+                ),
+              );
+            } else if (options.uri.path.endsWith('/user/getSubscribe') &&
+                options.headers['Authorization'] == 'old-token') {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: {
+                    'data': {'subscribe_url': '/new-sub'},
+                  },
+                ),
+              );
+            } else {
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  type: DioExceptionType.connectionError,
+                ),
+              );
+            }
+          },
+        ),
+      );
+    final service = SalmonService(dio: dio);
+    final refresh = service.refreshSession();
+
+    await requestStarted.future;
+    await service.clear();
+    final newSession = await service.login(
+      account: 'member@example.com',
+      password: 'secret',
+    );
+    completeRequest.complete();
+
+    expect(await refresh, isNull);
+    final preferences = await SharedPreferences.getInstance();
+    expect(newSession.authData, 'old-token');
+    expect(preferences.getString('salmon_auth_data'), 'old-token');
+    expect(preferences.getString('salmon_base_url'), salmonBootstrapBaseUrl);
+  });
+
   test('credential rejection does not masquerade as a network error', () async {
     SharedPreferences.setMockInitialValues({});
     final dio = Dio()
@@ -317,6 +615,167 @@ void main() {
           ),
         ),
       );
+    },
+  );
+
+  test(
+    'authenticated GET requests fail over to a healthy cached endpoint',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'salmon_base_url': 'https://stale.example.com',
+        'salmon_auth_data': 'session-token',
+        'salmon_base_urls_cache': jsonEncode(['https://fresh.example.com']),
+        'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+      });
+      final requests = <String>[];
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              requests.add(options.uri.toString());
+              if (options.uri.host == 'fresh.example.com') {
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: {
+                      'data': {'email': 'fresh@example.com'},
+                    },
+                  ),
+                );
+                return;
+              }
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  type: DioExceptionType.connectionError,
+                ),
+              );
+            },
+          ),
+        );
+
+      final result = await SalmonService(
+        dio: dio,
+      ).fetchUserInfo(forceRefresh: true);
+
+      expect(result['email'], 'fresh@example.com');
+      expect(requests, contains('https://fresh.example.com/api/v1/user/info'));
+      expect(
+        (await SharedPreferences.getInstance()).getString('salmon_base_url'),
+        'https://fresh.example.com',
+      );
+    },
+  );
+
+  test(
+    'force refresh keeps stale account data during a network outage',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'salmon_base_url': 'https://saved.example.com',
+        'salmon_auth_data': 'session-token',
+        'salmon_user_data_cache': jsonEncode({
+          'email': 'cached@example.com',
+          'plan_name': '黄金会员',
+        }),
+        'salmon_user_data_cache.at': DateTime.now().millisecondsSinceEpoch,
+      });
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) => handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.connectionTimeout,
+              ),
+            ),
+          ),
+        );
+
+      final result = await SalmonService(
+        dio: dio,
+      ).fetchUserInfo(forceRefresh: true);
+
+      expect(result['email'], 'cached@example.com');
+      expect(result['plan_name'], '黄金会员');
+    },
+  );
+
+  test('all authenticated 401 responses clear the saved session', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_base_url': 'https://saved.example.com',
+      'salmon_auth_data': 'session-token',
+      'salmon_base_urls_cache': jsonEncode(['https://saved.example.com']),
+      'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) => handler.reject(
+            DioException(
+              requestOptions: options,
+              response: Response(requestOptions: options, statusCode: 401),
+              type: DioExceptionType.badResponse,
+            ),
+          ),
+        ),
+      );
+
+    await expectLater(
+      SalmonService(dio: dio).fetchUserInfo(forceRefresh: true),
+      throwsA(isA<SalmonSessionExpiredException>()),
+    );
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('salmon_base_url'), isNull);
+    expect(preferences.getString('salmon_auth_data'), isNull);
+  });
+
+  test('successful authenticated responses may contain null data', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_base_url': 'https://saved.example.com',
+      'salmon_auth_data': 'session-token',
+    });
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) => handler.resolve(
+            Response(requestOptions: options, data: {'data': null}),
+          ),
+        ),
+      );
+
+    await SalmonService(dio: dio).generateInvite();
+  });
+
+  test(
+    'keeps the account plan when the plan catalog is temporarily empty',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'salmon_base_url': 'https://saved.example.com',
+        'salmon_auth_data': 'session-token',
+      });
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              final path = options.uri.path;
+              final data = path.endsWith('/user/info')
+                  ? {'plan_id': 7, 'transfer_enable': 100}
+                  : path.endsWith('/user/getSubscribe')
+                  ? {'plan_id': 7, 'plan_name': '暂无套餐', 'transfer_enable': 100}
+                  : path.endsWith('/user/plan/fetch')
+                  ? <dynamic>[]
+                  : <dynamic>[];
+              handler.resolve(
+                Response(requestOptions: options, data: {'data': data}),
+              );
+            },
+          ),
+        );
+
+      final result = await SalmonService(dio: dio).refreshMembershipData();
+
+      expect(result['plan_name'], '已有套餐');
+      expect(result['plan_quota_gb'], 100);
     },
   );
 
@@ -395,6 +854,194 @@ void main() {
     await expectLater(service.prepareChatwoot('  '), throwsStateError);
     final preferences = await SharedPreferences.getInstance();
     expect(preferences.getString('salmon_chatwoot_contact'), isNull);
+  });
+
+  test('remote customer service API keeps its saved conversation', () async {
+    SharedPreferences.setMockInitialValues({});
+    final paths = <String>[];
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (salmonConfigUrls.contains(
+              options.uri.toString().split('?').first,
+            )) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: jsonEncode({
+                    'urls': ['https://main.example.com'],
+                    'customerService': {
+                      'url':
+                          'https://support.example.com/widget?website_token=new-inbox#/',
+                    },
+                  }),
+                ),
+              );
+              return;
+            }
+            expect(options.uri.host, 'support.example.com');
+            paths.add(options.uri.path);
+            handler.resolve(
+              Response(
+                requestOptions: options,
+                data: options.uri.path.endsWith('/contacts')
+                    ? {'source_id': 'saved-contact'}
+                    : options.uri.path.endsWith('/conversations')
+                    ? {'id': 42}
+                    : {'payload': []},
+              ),
+            );
+          },
+        ),
+      );
+
+    final firstService = SalmonService(dio: dio);
+    final first = await firstService.prepareChatwoot('member@example.com');
+    final reopenedService = SalmonService(dio: dio);
+    expect(await reopenedService.prepareChatwoot('member@example.com'), first);
+    await reopenedService.fetchChatwootMessages('saved-contact', 42);
+    expect(paths, [
+      '/public/api/v1/inboxes/new-inbox/contacts',
+      '/public/api/v1/inboxes/new-inbox/contacts/saved-contact/conversations',
+      '/public/api/v1/inboxes/new-inbox/contacts/saved-contact/conversations/42/messages',
+    ]);
+  });
+
+  test(
+    'changing customer service does not send old IDs to the new inbox',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      var inbox = 'first-inbox';
+      var contactsCreated = 0;
+      var conversationsCreated = 0;
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              if (salmonConfigUrls.contains(
+                options.uri.toString().split('?').first,
+              )) {
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: jsonEncode({
+                      'urls': ['https://main.example.com'],
+                      'customerService': {
+                        'url':
+                            'https://support.example.com/widget?website_token=$inbox#/',
+                      },
+                    }),
+                  ),
+                );
+                return;
+              }
+              expect(
+                options.uri.path,
+                startsWith('/public/api/v1/inboxes/$inbox/'),
+              );
+              if (options.uri.path.endsWith('/contacts')) {
+                contactsCreated++;
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: {'source_id': 'contact-$contactsCreated'},
+                  ),
+                );
+              } else {
+                conversationsCreated++;
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: {'id': conversationsCreated},
+                  ),
+                );
+              }
+            },
+          ),
+        );
+      final service = SalmonService(dio: dio);
+      expect(await service.prepareChatwoot('member@example.com'), {
+        'source_id': 'contact-1',
+        'conversation_id': 1,
+      });
+      inbox = 'second-inbox';
+      await service.fetchSupportUrl(forceRefresh: true);
+      final changed = await service.prepareChatwoot('member@example.com');
+      expect(changed, {'source_id': 'contact-2', 'conversation_id': 2});
+      expect(await service.prepareChatwoot('member@example.com'), changed);
+      expect(contactsCreated, 2);
+      expect(conversationsCreated, 2);
+    },
+  );
+
+  test('the default inbox keeps sessions saved by older clients', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_chatwoot_email': 'member@example.com',
+      'salmon_chatwoot_contact': 'existing-contact',
+      'salmon_chatwoot_conversation': 42,
+      'salmon_base_urls_cache': jsonEncode(['https://main.example.com']),
+      'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            fail('The existing conversation should not make an HTTP request');
+          },
+        ),
+      );
+
+    expect(
+      await SalmonService(dio: dio).prepareChatwoot('member@example.com'),
+      {'source_id': 'existing-contact', 'conversation_id': 42},
+    );
+  });
+
+  test('a config refresh does not redirect an active conversation', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_chatwoot_email': 'member@example.com',
+      'salmon_chatwoot_contact': 'existing-contact',
+      'salmon_chatwoot_conversation': 42,
+      'salmon_base_urls_cache': jsonEncode(['https://main.example.com']),
+      'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+    });
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            if (salmonConfigUrls.contains(
+              options.uri.toString().split('?').first,
+            )) {
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: jsonEncode({
+                    'urls': ['https://main.example.com'],
+                    'customerService': {
+                      'url':
+                          'https://support.example.com/widget?website_token=new-inbox#/',
+                    },
+                  }),
+                ),
+              );
+              return;
+            }
+            expect(options.uri.host, 'chat.swywl.com');
+            expect(
+              options.uri.path,
+              endsWith('/contacts/existing-contact/conversations/42/messages'),
+            );
+            handler.resolve(
+              Response(requestOptions: options, data: {'payload': []}),
+            );
+          },
+        ),
+      );
+    final service = SalmonService(dio: dio);
+    await service.prepareChatwoot('member@example.com');
+    await service.fetchSupportUrl(forceRefresh: true);
+    await service.fetchChatwootMessages('existing-contact', 42);
   });
 
   test(

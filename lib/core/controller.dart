@@ -42,6 +42,12 @@ class CoreController {
     return _interface.preload();
   }
 
+  void resetConnectionState() {
+    if (system.isAndroid) {
+      coreLib?.resetConnectionState();
+    }
+  }
+
   static Future<void> initGeo() async {
     final homePath = await appPath.homeDirPath;
     final homeDir = Directory(homePath);

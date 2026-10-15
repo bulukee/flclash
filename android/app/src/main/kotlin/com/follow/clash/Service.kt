@@ -13,7 +13,9 @@ import com.follow.clash.service.IVoidInterface
 import com.follow.clash.service.RemoteService
 import com.follow.clash.service.models.NotificationParams
 import com.follow.clash.service.models.VpnOptions
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -68,8 +70,9 @@ object Service {
         onStarted: (() -> Unit)?,
         onResult: ((result: String) -> Unit)?,
     ): Result<Unit> {
+        val started = CompletableDeferred<Unit>()
         val res = mutableListOf<ByteArray>()
-        return delegate.useService {
+        val bindResult = delegate.useService {
             it.quickSetup(
                 initParamsString,
                 setupParamsString,
@@ -88,12 +91,17 @@ object Service {
                 },
                 object : IVoidInterface.Stub() {
                     override fun invoke() {
-                        onStarted?.let { onStarted ->
-                            onStarted()
-                        }
+                        onStarted?.invoke()
+                        started.complete(Unit)
                     }
                 }
             )
+        }
+        if (bindResult.isFailure) return bindResult
+        return runCatching {
+            withTimeout(15_000L) {
+                started.await()
+            }
         }
     }
 

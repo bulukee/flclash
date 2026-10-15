@@ -512,6 +512,25 @@ class CoreAction extends _$CoreAction {
     ref.read(coreStatusProvider.notifier).value = CoreStatus.connected;
   }
 
+  Future<bool> recoverCore() async {
+    try {
+      if (system.isAndroid) {
+        coreController.resetConnectionState();
+      }
+      ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
+      await connectCore();
+      if (ref.read(coreStatusProvider) != CoreStatus.connected) {
+        return false;
+      }
+      await initCore();
+      return true;
+    } catch (error) {
+      ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
+      commonPrint.log('core recovery failed: $error');
+      return false;
+    }
+  }
+
   Future<Result<bool>> requestAdmin(bool enableTun) async {
     final realTunEnable = ref.read(realTunEnableProvider);
     if (enableTun != realTunEnable && realTunEnable == false) {

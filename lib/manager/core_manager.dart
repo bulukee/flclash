@@ -108,7 +108,11 @@ class _CoreContainerState extends ConsumerState<CoreManager>
     if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
       context.showNotifier(message);
     }
-    await coreController.shutdown(false);
+    if (system.isAndroid) {
+      coreController.resetConnectionState();
+    } else {
+      await coreController.shutdown(false);
+    }
     super.onCrash(message);
   }
 

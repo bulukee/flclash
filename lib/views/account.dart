@@ -7,6 +7,8 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:fl_clash/services/salmon_traffic_reset.dart';
+import 'package:fl_clash/services/salmon_update_service.dart';
+import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/views/config/general.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -941,6 +943,29 @@ class _SalmonSettingsPageState extends State<SalmonSettingsPage> {
                     ),
                   ),
                 ),
+                const Divider(height: 1),
+                ValueListenableBuilder<bool>(
+                  valueListenable: SalmonUpdateService.updateAvailable,
+                  builder: (_, available, __) => ListTile(
+                    leading: const Icon(Icons.system_update_alt_rounded),
+                    title: const Text('检查更新'),
+                    subtitle: Text('当前版本 ${globalState.packageInfo.version}'),
+                    trailing: available
+                        ? Container(
+                            width: 8,
+                            height: 8,
+                            decoration: const BoxDecoration(
+                              color: Colors.red,
+                              shape: BoxShape.circle,
+                            ),
+                          )
+                        : const Icon(Icons.chevron_right_rounded),
+                    onTap: () => SalmonUpdateService.checkAndPrompt(
+                      context,
+                      manual: true,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1864,11 +1889,13 @@ class EmbeddedCustomerServicePage extends StatefulWidget {
 
   static WebViewController? _retainedController;
   static int? _retainedSessionRevision;
+  static String? _retainedSupportUrl;
 
   static Future<void> clearRetainedSession() async {
     final controller = _retainedController;
     _retainedController = null;
     _retainedSessionRevision = null;
+    _retainedSupportUrl = null;
     try {
       await controller?.clearLocalStorage();
     } catch (_) {
@@ -1888,49 +1915,6 @@ class EmbeddedCustomerServicePage extends StatefulWidget {
 
 class _EmbeddedCustomerServicePageState
     extends State<EmbeddedCustomerServicePage> {
-  static const _chatHtml = r'''<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-  <style>
-    html,body { width:100%; height:100%; margin:0; background:#f8faff; overflow:hidden; }
-    .woot-widget-bubble { display:none !important; }
-    .woot-widget-holder {
-      inset:0 !important; width:100% !important; height:100% !important;
-      max-height:none !important; border-radius:0 !important;
-    }
-  </style>
-</head>
-<body>
-<script>
-  window.chatwootSettings = {
-    hideMessageBubble: true,
-    position: 'right',
-    locale: 'zh_CN',
-    type: 'expanded_bubble'
-  };
-  (function(d,t) {
-    var BASE_URL='https://chat.swywl.com';
-    var g=d.createElement(t),s=d.getElementsByTagName(t)[0];
-    g.src=BASE_URL+'/packs/js/sdk.js';
-    g.async=true;
-    s.parentNode.insertBefore(g,s);
-    g.onload=function(){
-      window.chatwootSDK.run({
-        websiteToken:'8SpSTtNMSfp64U8wevUS7wZ7',
-        baseUrl:BASE_URL
-      });
-    };
-  })(document,'script');
-  window.addEventListener('chatwoot:ready', function() {
-    window.$chatwoot.toggle('open');
-    ChatwootReady.postMessage('ready');
-  });
-</script>
-</body>
-</html>''';
-
   late final WebViewController controller;
   int progress = 0;
   bool chatReady = false;
@@ -1940,7 +1924,7 @@ class _EmbeddedCustomerServicePageState
   int retryCount = 0;
   bool retryScheduled = false;
 
-  Future<void> _loadDirectWidget() async {
+  Future<void> _loadDirectWidget({bool reuse = false}) async {
     usingDirectWidget = true;
     if (mounted) {
       setState(() {
@@ -1950,14 +1934,26 @@ class _EmbeddedCustomerServicePageState
       });
     }
     readyTimer?.cancel();
-    readyTimer = Timer(const Duration(seconds: 40), () {
-      if (mounted && !chatReady) setState(() => failed = true);
-    });
-    await controller.loadRequest(
-      Uri.parse(
-        'https://chat.swywl.com/widget?website_token=8SpSTtNMSfp64U8wevUS7wZ7#/',
-      ),
-    );
+    try {
+      final supportUrl = await salmonService.fetchSupportUrl();
+      if (!mounted) return;
+      if (reuse &&
+          EmbeddedCustomerServicePage._retainedSupportUrl == supportUrl) {
+        setState(() {
+          chatReady = true;
+          progress = 100;
+        });
+        return;
+      }
+      readyTimer = Timer(const Duration(seconds: 40), () {
+        if (mounted && !chatReady) setState(() => failed = true);
+      });
+      await controller.loadRequest(Uri.parse(supportUrl));
+      EmbeddedCustomerServicePage._retainedSupportUrl = supportUrl;
+    } catch (_) {
+      readyTimer?.cancel();
+      if (mounted) setState(() => failed = true);
+    }
   }
 
   @override
@@ -2024,14 +2020,9 @@ class _EmbeddedCustomerServicePageState
         return [Uri.file(image.path).toString()];
       });
     }
-    if (retained == null) {
-      EmbeddedCustomerServicePage._retainedController = controller;
-      EmbeddedCustomerServicePage._retainedSessionRevision = revision;
-      _loadDirectWidget();
-    } else {
-      chatReady = true;
-      progress = 100;
-    }
+    EmbeddedCustomerServicePage._retainedController = controller;
+    EmbeddedCustomerServicePage._retainedSessionRevision = revision;
+    unawaited(_loadDirectWidget(reuse: retained != null));
   }
 
   @override
@@ -2111,6 +2102,7 @@ class WindowsEmbeddedCustomerServicePage extends StatefulWidget {
   const WindowsEmbeddedCustomerServicePage({super.key});
 
   static windows_webview.WebviewController? _retainedController;
+  static String? _retainedSupportUrl;
   static Future<void>? _lastDispose;
 
   static Future<String> _userDataPath() async {
@@ -2129,6 +2121,7 @@ class WindowsEmbeddedCustomerServicePage extends StatefulWidget {
     await (_lastDispose ?? Future<void>.value());
     final controller = _retainedController;
     _retainedController = null;
+    _retainedSupportUrl = null;
     try {
       if (controller != null) {
         await controller.clearCookies();
@@ -2172,6 +2165,8 @@ class _WindowsEmbeddedCustomerServicePageState
 
   Future<void> _initialize() async {
     try {
+      final supportUrl = await salmonService.fetchSupportUrl();
+      if (!mounted) return;
       final version =
           await windows_webview.WebviewController.getWebViewVersion();
       if (version == null) {
@@ -2184,8 +2179,11 @@ class _WindowsEmbeddedCustomerServicePageState
       await controller.setPopupWindowPolicy(
         windows_webview.WebviewPopupWindowPolicy.deny,
       );
-      if (!reusedController) {
-        await controller.loadUrl(salmonSupportUrl);
+      if (!reusedController ||
+          WindowsEmbeddedCustomerServicePage._retainedSupportUrl !=
+              supportUrl) {
+        await controller.loadUrl(supportUrl);
+        WindowsEmbeddedCustomerServicePage._retainedSupportUrl = supportUrl;
       }
       if (mounted) setState(() {});
     } catch (value) {
@@ -2246,7 +2244,7 @@ class _WindowsEmbeddedCustomerServicePageState
         ? windows_webview.Webview(
             controller,
             permissionRequested: (_, _, _) async =>
-                windows_webview.WebviewPermissionDecision.allow,
+                windows_webview.WebviewPermissionDecision.deny,
           )
         : const Center(child: CircularProgressIndicator()),
   );
@@ -2290,8 +2288,9 @@ class _ChatwootPageState extends State<ChatwootPage> {
   Future<void> _openSupportWebsite() async {
     var opened = false;
     try {
+      final supportUrl = await salmonService.fetchSupportUrl();
       opened = await launchUrl(
-        Uri.parse(salmonSupportUrl),
+        Uri.parse(supportUrl),
         mode: LaunchMode.externalApplication,
       );
     } catch (_) {

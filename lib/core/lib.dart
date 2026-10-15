@@ -13,19 +13,49 @@ class CoreLib extends CoreHandlerInterface {
   static CoreLib? _instance;
 
   Completer<bool> _connectedCompleter = Completer();
+  Future<String>? _preloadFuture;
+  int _connectionGeneration = 0;
 
   CoreLib._internal();
 
   @override
-  Future<String> preload() async {
+  Future<String> preload() {
     if (_connectedCompleter.isCompleted) {
-      return 'core is connected';
+      return Future.value('core is connected');
     }
+    final inFlight = _preloadFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final generation = _connectionGeneration;
+    final future = _preload(generation);
+    _preloadFuture = future;
+    future.then<void>(
+      (_) {
+        if (identical(_preloadFuture, future)) {
+          _preloadFuture = null;
+        }
+      },
+      onError: (Object _, StackTrace _) {
+        if (identical(_preloadFuture, future)) {
+          _preloadFuture = null;
+        }
+      },
+    );
+    return future;
+  }
+
+  Future<String> _preload(int generation) async {
     final res = await service?.init();
+    if (generation != _connectionGeneration) {
+      return 'service connection reset';
+    }
     if (res?.isEmpty != true) {
       return res ?? '';
     }
-    _connectedCompleter.complete(true);
+    if (!_connectedCompleter.isCompleted) {
+      _connectedCompleter.complete(true);
+    }
     final syncRes = await service?.syncState(
       globalState.container.read(sharedStateProvider),
     );
@@ -44,11 +74,16 @@ class CoreLib extends CoreHandlerInterface {
 
   @override
   Future<bool> shutdown(_) async {
-    if (!_connectedCompleter.isCompleted) {
-      return false;
-    }
-    _connectedCompleter = Completer();
+    resetConnectionState();
     return service?.shutdown() ?? true;
+  }
+
+  /// Clears the Dart-side transport state after Android has rebound the
+  /// background service. The Go core can be recreated without a user stop.
+  void resetConnectionState() {
+    _connectionGeneration++;
+    _preloadFuture = null;
+    _connectedCompleter = Completer();
   }
 
   @override

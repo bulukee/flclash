@@ -33,6 +33,14 @@ void main() {
     expect((await resolver.resolve('example.com')).single.address, '192.0.2.3');
   });
 
+  test('falls back on an unexpected system resolver error', () async {
+    final resolver = SalmonDnsResolver(
+      systemLookup: (_) async => throw StateError('resolver unavailable'),
+      encryptedLookup: (_) async => [InternetAddress('192.0.2.5')],
+    );
+    expect((await resolver.resolve('example.com')).single.address, '192.0.2.5');
+  });
+
   test('IP literals never trigger DNS', () async {
     final resolver = SalmonDnsResolver(
       systemLookup: (_) async => throw StateError('Unexpected system lookup'),

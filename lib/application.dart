@@ -60,6 +60,7 @@ class ApplicationState extends ConsumerState<Application> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {
       if (globalState.navigatorKey.currentContext != null) {
+        _scheduleUpdateCheck();
         await globalState.attach();
       } else {
         exit(0);
@@ -67,14 +68,19 @@ class ApplicationState extends ConsumerState<Application> {
       _autoUpdateProfilesTask();
       _initLink();
       app?.initShortcuts();
-      if (mounted) {
-        await Future<void>.delayed(const Duration(seconds: 3));
+    });
+  }
+
+  void _scheduleUpdateCheck() {
+    unawaited(
+      Future<void>.delayed(const Duration(seconds: 3), () async {
+        if (!mounted) return;
         final updateContext = globalState.navigatorKey.currentContext;
-        if (mounted && updateContext != null && updateContext.mounted) {
+        if (updateContext != null && updateContext.mounted) {
           await SalmonUpdateService.checkAndPrompt(updateContext);
         }
-      }
-    });
+      }),
+    );
   }
 
   void _initLink() {

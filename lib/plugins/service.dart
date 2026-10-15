@@ -11,6 +11,8 @@ abstract mixin class ServiceListener {
   void onServiceEvent(CoreEvent event) {}
 
   void onServiceCrash(String message) {}
+
+  void onServiceRecovered() {}
 }
 
 class Service {
@@ -41,6 +43,11 @@ class Service {
           final message = call.arguments as String? ?? '';
           for (final listener in _listeners) {
             listener.onServiceCrash(message);
+          }
+          break;
+        case 'recovered':
+          for (final listener in _listeners) {
+            listener.onServiceRecovered();
           }
           break;
         default:

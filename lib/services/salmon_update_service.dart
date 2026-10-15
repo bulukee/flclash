@@ -60,6 +60,7 @@ class SalmonUpdateService {
   static bool _dialogVisible = false;
   static const _lastPromptedUpdateKey = 'salmon_last_prompted_update';
   static const _updateAvailableKey = 'salmon_update_available';
+  static const _pendingUpdateKey = 'salmon_pending_update';
   static final ValueNotifier<bool> updateAvailable = ValueNotifier<bool>(false);
   static Future<void>? _availabilityRestore;
   static final Dio _dio = _createDio();
@@ -105,6 +106,8 @@ class SalmonUpdateService {
     SalmonAppUpdate? newestUpdate;
     final info = await PackageInfo.fromPlatform();
     final currentCode = int.tryParse(info.buildNumber) ?? 0;
+    final preferences = await SharedPreferences.getInstance();
+    final pendingUpdate = _restorePendingUpdate(preferences);
     for (final configUrl in salmonConfigUrls) {
       try {
         final response = await _dio.get<String>(
@@ -160,12 +163,66 @@ class SalmonUpdateService {
     }
     // A backup source may fail even when another source returned a valid
     // response. Only report an error when no source produced a usable result.
-    if (!validResponse && lastError != null) throw lastError;
-    updateAvailable.value = newestUpdate != null;
-    final preferences = await SharedPreferences.getInstance();
+    if (!validResponse && pendingUpdate == null) {
+      if (lastError != null) throw lastError;
+      throw const FormatException(
+        'No usable update information in remote config',
+      );
+    }
+    final pendingIsNewer =
+        pendingUpdate != null &&
+        isNewerThanInstalled(pendingUpdate, info.version, currentCode);
+    final update =
+        pendingIsNewer &&
+            (newestUpdate == null ||
+                _compareUpdates(pendingUpdate, newestUpdate) > 0)
+        ? pendingUpdate
+        : newestUpdate;
+    updateAvailable.value = update != null;
+    if (update == null) {
+      await preferences.remove(_pendingUpdateKey);
+    } else {
+      await preferences.setString(
+        _pendingUpdateKey,
+        jsonEncode({
+          'versionName': update.version,
+          'versionCode': update.versionCode,
+          'url': update.url,
+          'sha256': update.sha256Value,
+          'force': update.force,
+          'notes': update.notes,
+        }),
+      );
+    }
     await preferences.setBool(_updateAvailableKey, updateAvailable.value);
-    if (newestUpdate != null) return newestUpdate;
-    return null;
+    return update;
+  }
+
+  static SalmonAppUpdate? _restorePendingUpdate(SharedPreferences preferences) {
+    final raw = preferences.getString(_pendingUpdateKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return SalmonAppUpdate.fromJson(
+        Map<String, dynamic>.from(jsonDecode(raw) as Map),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @visibleForTesting
+  static bool isNewerThanInstalled(
+    SalmonAppUpdate update,
+    String currentVersion,
+    int currentCode,
+  ) =>
+      update.versionCode > currentCode ||
+      _compareVersion(update.version, currentVersion) > 0;
+
+  static int _compareUpdates(SalmonAppUpdate first, SalmonAppUpdate second) {
+    final versionComparison = _compareVersion(first.version, second.version);
+    if (versionComparison != 0) return versionComparison;
+    return first.versionCode.compareTo(second.versionCode);
   }
 
   static Future<void> _restoreAvailability() async {
@@ -177,7 +234,8 @@ class SalmonUpdateService {
     BuildContext context, {
     bool manual = false,
   }) async {
-    final supported = Platform.isAndroid || Platform.isWindows;
+    final supported =
+        Platform.isAndroid || Platform.isWindows || Platform.isMacOS;
     if (!supported) {
       if (manual && context.mounted) context.showNotifier('当前平台暂不支持客户端内更新');
       return;
@@ -196,8 +254,12 @@ class SalmonUpdateService {
         final preferences = await SharedPreferences.getInstance();
         final updateKey = '${update.version}:${update.versionCode}';
         if (preferences.getString(_lastPromptedUpdateKey) == updateKey) return;
-        await preferences.setString(_lastPromptedUpdateKey, updateKey);
         if (!context.mounted) return;
+        await preferences.setString(_lastPromptedUpdateKey, updateKey);
+        if (!context.mounted) {
+          await preferences.remove(_lastPromptedUpdateKey);
+          return;
+        }
       }
       _dialogVisible = true;
       await showDialog<void>(
@@ -205,7 +267,7 @@ class SalmonUpdateService {
         barrierDismissible: !update.force,
         builder: (_) => PopScope(
           canPop: !update.force,
-          child: _UpdateDialog(update: update, autoInstall: manual),
+          child: _UpdateDialog(update: update),
         ),
       );
     } catch (_) {
@@ -221,7 +283,11 @@ class SalmonUpdateService {
     ValueChanged<double> onProgress,
   ) async {
     final cache = await getTemporaryDirectory();
-    final extension = Platform.isWindows ? 'exe' : 'apk';
+    final extension = Platform.isWindows
+        ? 'exe'
+        : Platform.isMacOS
+        ? 'dmg'
+        : 'apk';
     final file = File(
       '${cache.path}${Platform.pathSeparator}salmon-update.$extension',
     );
@@ -246,8 +312,12 @@ class SalmonUpdateService {
 
   static Future<bool> launchInstaller(String path) async {
     if (Platform.isAndroid) return App().installApk(path);
-    if (Platform.isWindows) {
-      await Process.start(path, const [], runInShell: true);
+    if (Platform.isWindows || Platform.isMacOS) {
+      await Process.start(
+        Platform.isWindows ? path : 'open',
+        Platform.isWindows ? const [] : [path],
+        runInShell: Platform.isWindows,
+      );
       return true;
     }
     return false;
@@ -256,8 +326,7 @@ class SalmonUpdateService {
 
 class _UpdateDialog extends StatefulWidget {
   final SalmonAppUpdate update;
-  final bool autoInstall;
-  const _UpdateDialog({required this.update, this.autoInstall = false});
+  const _UpdateDialog({required this.update});
   @override
   State<_UpdateDialog> createState() => _UpdateDialogState();
 }
@@ -265,16 +334,6 @@ class _UpdateDialog extends StatefulWidget {
 class _UpdateDialogState extends State<_UpdateDialog> {
   double? _progress;
   String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.autoInstall) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _install();
-      });
-    }
-  }
 
   Future<void> _install() async {
     if (_progress != null) return;
@@ -347,7 +406,13 @@ class _UpdateDialogState extends State<_UpdateDialog> {
         FilledButton.icon(
           onPressed: downloading ? null : _install,
           icon: const Icon(Icons.download_rounded),
-          label: Text(downloading ? '下载中' : '立即更新'),
+          label: Text(
+            downloading
+                ? '下载中'
+                : Platform.isMacOS
+                ? '下载并打开安装包'
+                : '下载并安装',
+          ),
         ),
       ],
     );
