@@ -42,8 +42,14 @@ class _InvitationPageState extends State<InvitationPage> {
       salmonService.fetchInvites(forceRefresh: forceRefresh),
       salmonService.fetchUserInfo(forceRefresh: forceRefresh),
       salmonService.fetchCommissionConfig(forceRefresh: forceRefresh),
+      salmonService.fetchInvitationUrl(forceRefresh: forceRefresh),
     ]);
-    return {'invite': values[0], 'user': values[1], 'commission': values[2]};
+    return {
+      'invite': values[0],
+      'user': values[1],
+      'commission': values[2],
+      'invitationUrl': values[3],
+    };
   }
 
   num _value(List<Map<String, dynamic>> sources, List<String> keys) {
@@ -115,6 +121,8 @@ class _InvitationPageState extends State<InvitationPage> {
         final commission = Map<String, dynamic>.from(
           bundle['commission'] is Map ? bundle['commission'] as Map : const {},
         );
+        final invitationUrl =
+            bundle['invitationUrl'] as String? ?? salmonDefaultInvitationUrl;
         final stat = Map<String, dynamic>.from(
           data['stat'] is Map ? data['stat'] as Map : const {},
         );
@@ -247,7 +255,7 @@ class _InvitationPageState extends State<InvitationPage> {
             else
               ...codes.map((item) {
                 final code = '${item['code'] ?? ''}';
-                final inviteUrl = 'https://dll.swywl.com/register?code=$code';
+                final inviteUrl = buildSalmonInvitationUrl(invitationUrl, code);
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),
                   child: ListTile(
@@ -515,6 +523,7 @@ class _AccountViewState extends State<AccountView> {
     var data = await salmonService.fetchInvites();
     var user = await salmonService.fetchUserInfo();
     var commission = await salmonService.fetchCommissionConfig();
+    var invitationUrl = await salmonService.fetchInvitationUrl();
     if (!mounted) return;
     await showModalBottomSheet<void>(
       context: context,
@@ -581,6 +590,9 @@ class _AccountViewState extends State<AccountView> {
                         forceRefresh: true,
                       );
                       commission = await salmonService.fetchCommissionConfig(
+                        forceRefresh: true,
+                      );
+                      invitationUrl = await salmonService.fetchInvitationUrl(
                         forceRefresh: true,
                       );
                       update(() {});
@@ -677,8 +689,10 @@ class _AccountViewState extends State<AccountView> {
                                   onPressed: () async {
                                     await Clipboard.setData(
                                       ClipboardData(
-                                        text:
-                                            'https://dll.swywl.com/register?code=$code',
+                                        text: buildSalmonInvitationUrl(
+                                          invitationUrl,
+                                          code,
+                                        ),
                                       ),
                                     );
                                     if (context.mounted)

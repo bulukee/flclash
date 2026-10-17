@@ -25,6 +25,29 @@ class _SalmonRegisterPageState extends State<SalmonRegisterPage> {
   final invite = TextEditingController();
   final formKey = GlobalKey<FormState>();
   bool busy = false;
+  bool _inviteEdited = false;
+
+  @override
+  void initState() {
+    super.initState();
+    invite.text = salmonInvitationCodeFromUrl(salmonDefaultInvitationUrl) ?? '';
+    _loadInvitationCode();
+  }
+
+  Future<void> _loadInvitationCode() async {
+    try {
+      final url = await salmonService.fetchInvitationUrl();
+      if (!mounted || _inviteEdited) return;
+      final code = salmonInvitationCodeFromUrl(url);
+      if (code == null) return;
+      invite.value = TextEditingValue(
+        text: code,
+        selection: TextSelection.collapsed(offset: code.length),
+      );
+    } catch (_) {
+      // Keep the built-in invitation code if remote config is unavailable.
+    }
+  }
 
   @override
   void dispose() {
@@ -90,6 +113,7 @@ class _SalmonRegisterPageState extends State<SalmonRegisterPage> {
           const SizedBox(height: 14),
           TextFormField(
             controller: invite,
+            onChanged: (_) => _inviteEdited = true,
             decoration: const InputDecoration(
               labelText: '邀请码（选填）',
               prefixIcon: Icon(Icons.card_giftcard_rounded),

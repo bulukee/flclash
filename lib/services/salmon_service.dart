@@ -17,6 +17,8 @@ const _retiredApiHost = '1111.swyyy.com';
 const salmonWebsiteUrl = 'https://swywl.com';
 const salmonSupportUrl =
     'https://chat.swywl.com/widget?website_token=8SpSTtNMSfp64U8wevUS7wZ7#/';
+const salmonDefaultInvitationUrl =
+    'https://swy1.sanweny.com/register?code=NoEYnmwU';
 
 Map<String, dynamic>? salmonAccountCache;
 List<Map<String, dynamic>>? salmonNoticeCache;
@@ -68,8 +70,13 @@ class _SalmonRequestResult {
 class SalmonRemoteConfig {
   final List<String> urls;
   final String? customerServiceUrl;
+  final String? invitationUrl;
 
-  const SalmonRemoteConfig({required this.urls, this.customerServiceUrl});
+  const SalmonRemoteConfig({
+    required this.urls,
+    this.customerServiceUrl,
+    this.invitationUrl,
+  });
 
   factory SalmonRemoteConfig.parse(String source) {
     final json = decodeSalmonConfigSource(source);
@@ -96,11 +103,17 @@ class SalmonRemoteConfig {
       throw const FormatException('No valid HTTPS URL');
     }
     final customerService = json['customerService'];
+    final invitation = json['invitation'];
     return SalmonRemoteConfig(
       urls: normalizedUrls,
       customerServiceUrl: customerService is Map
           ? _validatedSupportUrl(customerService['url'])
           : null,
+      invitationUrl: _validatedInvitationUrl(
+        invitation is Map
+            ? invitation['url']
+            : json['invitationUrl'] ?? json['inviteUrl'],
+      ),
     );
   }
 }
@@ -116,6 +129,32 @@ String? _validatedSupportUrl(dynamic value) {
     return null;
   }
   return url;
+}
+
+String? _validatedInvitationUrl(dynamic value) {
+  if (value is! String) return null;
+  final url = value.trim();
+  final uri = Uri.tryParse(url);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    return null;
+  }
+  return url;
+}
+
+String? salmonInvitationCodeFromUrl(String url) {
+  final uri = Uri.tryParse(url);
+  final code = uri?.queryParameters['code']?.trim();
+  return code == null || code.isEmpty ? null : code;
+}
+
+String buildSalmonInvitationUrl(String baseUrl, String code) {
+  final uri = Uri.parse(baseUrl);
+  return uri
+      .replace(queryParameters: {...uri.queryParameters, 'code': code})
+      .toString();
 }
 
 Map<String, dynamic> decodeSalmonConfigSource(String source) {
@@ -168,6 +207,7 @@ class SalmonService {
   static const _baseUrlsCacheKey = 'salmon_base_urls_cache';
   static const _baseUrlsCacheAtKey = 'salmon_base_urls_cache_at';
   static const _customerServiceUrlKey = 'salmon_customer_service_url';
+  static const _invitationUrlKey = 'salmon_invitation_url';
   static const _plansDataCacheKey = 'salmon_plans_data_cache';
   static const _userDataCacheKey = 'salmon_user_data_cache';
   static const _subscribeDataCacheKey = 'salmon_subscribe_data_cache';
@@ -187,6 +227,7 @@ class SalmonService {
   final Dio _dio;
   static Future<void> _sessionMutation = Future<void>.value();
   String _supportUrl = salmonSupportUrl;
+  String _invitationUrl = salmonDefaultInvitationUrl;
   String _chatSessionUrl = salmonSupportUrl;
   final ValueNotifier<int> sessionRevision = ValueNotifier<int>(0);
   final ValueNotifier<int> membershipRevision = ValueNotifier<int>(0);
@@ -210,6 +251,9 @@ class SalmonService {
     _supportUrl =
         _validatedSupportUrl(preferences.getString(_customerServiceUrlKey)) ??
         salmonSupportUrl;
+    _invitationUrl =
+        _validatedInvitationUrl(preferences.getString(_invitationUrlKey)) ??
+        salmonDefaultInvitationUrl;
     final cachedRaw = preferences.getString(_baseUrlsCacheKey);
     var cached = <String>[];
     if (cachedRaw != null) {
@@ -244,6 +288,10 @@ class SalmonService {
           await preferences.setString(_customerServiceUrlKey, supportUrl);
           _supportUrl = supportUrl;
         }
+        if (config.invitationUrl case final invitationUrl?) {
+          await preferences.setString(_invitationUrlKey, invitationUrl);
+          _invitationUrl = invitationUrl;
+        }
         await preferences.setString(_baseUrlsCacheKey, jsonEncode(config.urls));
         await preferences.setInt(
           _baseUrlsCacheAtKey,
@@ -260,6 +308,11 @@ class SalmonService {
   Future<String> fetchSupportUrl({bool forceRefresh = false}) async {
     await fetchBaseUrls(forceRefresh: forceRefresh);
     return _supportUrl;
+  }
+
+  Future<String> fetchInvitationUrl({bool forceRefresh = false}) async {
+    await fetchBaseUrls(forceRefresh: forceRefresh);
+    return _invitationUrl;
   }
 
   Future<void> sendEmailCode(String email) async {

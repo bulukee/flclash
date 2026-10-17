@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -102,112 +103,83 @@ class SalmonUpdateService {
   static Future<SalmonAppUpdate?> check() async {
     await (_availabilityRestore ??= _restoreAvailability());
     Object? lastError;
-    var validResponse = false;
-    SalmonAppUpdate? newestUpdate;
+    var hasValidRemoteConfig = false;
+    SalmonAppUpdate? remoteUpdate;
     final info = await PackageInfo.fromPlatform();
     final currentCode = int.tryParse(info.buildNumber) ?? 0;
     final preferences = await SharedPreferences.getInstance();
-    final pendingUpdate = _restorePendingUpdate(preferences);
-    for (final configUrl in salmonConfigUrls) {
-      try {
-        final response = await _dio.get<String>(
-          configUrl,
-          queryParameters: {'_': DateTime.now().millisecondsSinceEpoch},
-          options: Options(responseType: ResponseType.plain),
-        );
-        final root = decodeSalmonConfigSource(response.data ?? '');
-        if (root['updates'] is! Map) {
-          continue;
-        }
-        final updates = root['updates'] as Map;
-        final key = Platform.isAndroid
-            ? 'android'
-            : Platform.isWindows
-            ? 'windows'
-            : Platform.isMacOS
-            ? 'macos'
-            : '';
-        if (key.isEmpty || updates[key] is! Map) continue;
-        final updateJson = Map<String, dynamic>.from(updates[key] as Map);
-        if (Platform.isAndroid) {
-          const buildAbi = String.fromEnvironment(
-            'SALMON_ABI',
-            defaultValue: 'arm64-v8a',
-          );
-          if (buildAbi.contains('x86')) {
-            updateJson['url'] ??= updateJson['x64Url'];
-            updateJson['urlBase64'] ??= updateJson['x64UrlBase64'];
-          } else {
-            updateJson['url'] ??= updateJson['arm64Url'];
-            updateJson['urlBase64'] ??= updateJson['arm64UrlBase64'];
-          }
-        }
-        updateJson['notes'] ??= root['releaseNotes'];
-        final update = SalmonAppUpdate.fromJson(updateJson);
-        validResponse = true;
-        final buildIsNewer = update.versionCode > currentCode;
-        final nameIsNewer = _compareVersion(update.version, info.version) > 0;
-        if (!buildIsNewer && !nameIsNewer) continue;
-
-        // Never stop at the first valid source: the first endpoint can still
-        // be cached while a backup endpoint already publishes a newer build.
-        if (newestUpdate == null ||
-            _compareVersion(update.version, newestUpdate.version) > 0 ||
-            (_compareVersion(update.version, newestUpdate.version) == 0 &&
-                update.versionCode > newestUpdate.versionCode)) {
-          newestUpdate = update;
-        }
-      } catch (error) {
-        lastError = error;
+    // Drop legacy cached update data. A stale cached manifest must never
+    // trigger an installer prompt when the current remote config is offline.
+    await preferences.remove(_pendingUpdateKey);
+    // Only the GitCode release manifest is authoritative. Other config
+    // failover sources may contain stale release metadata.
+    try {
+      final response = await _dio.get<String>(
+        salmonConfigUrl,
+        queryParameters: {'_': DateTime.now().millisecondsSinceEpoch},
+        options: Options(responseType: ResponseType.plain),
+      );
+      final root = decodeSalmonConfigSource(response.data ?? '');
+      if (root['updates'] is! Map) {
+        throw const FormatException('No update information in remote config');
       }
+      final updates = root['updates'] as Map;
+      final key = Platform.isAndroid
+          ? 'android'
+          : Platform.isWindows
+          ? 'windows'
+          : Platform.isMacOS
+          ? 'macos'
+          : '';
+      if (key.isEmpty || updates[key] is! Map) {
+        throw const FormatException('No update information for this platform');
+      }
+      final updateJson = Map<String, dynamic>.from(updates[key] as Map);
+      if (Platform.isAndroid) {
+        const buildAbi = String.fromEnvironment(
+          'SALMON_ABI',
+          defaultValue: 'arm64-v8a',
+        );
+        if (buildAbi.contains('x86')) {
+          updateJson['url'] ??= updateJson['x64Url'];
+          updateJson['urlBase64'] ??= updateJson['x64UrlBase64'];
+        } else {
+          updateJson['url'] ??= updateJson['arm64Url'];
+          updateJson['urlBase64'] ??= updateJson['arm64UrlBase64'];
+        }
+      } else if (Platform.isMacOS) {
+        final architectureConfig = selectMacOSUpdateConfig(
+          updateJson,
+          arm64: ffi.Abi.current() == ffi.Abi.macosArm64,
+        );
+        updateJson
+          ..clear()
+          ..addAll(architectureConfig);
+      }
+      updateJson['notes'] ??= root['releaseNotes'];
+      final update = SalmonAppUpdate.fromJson(updateJson);
+      hasValidRemoteConfig = true;
+      final buildIsNewer = update.versionCode > currentCode;
+      final nameIsNewer = _compareVersion(update.version, info.version) > 0;
+      if (buildIsNewer || nameIsNewer) remoteUpdate = update;
+    } catch (error) {
+      lastError = error;
     }
-    // A backup source may fail even when another source returned a valid
-    // response. Only report an error when no source produced a usable result.
-    if (!validResponse && pendingUpdate == null) {
+    if (!hasValidRemoteConfig) {
       if (lastError != null) throw lastError;
       throw const FormatException(
         'No usable update information in remote config',
       );
     }
-    final pendingIsNewer =
-        pendingUpdate != null &&
-        isNewerThanInstalled(pendingUpdate, info.version, currentCode);
-    final update =
-        pendingIsNewer &&
-            (newestUpdate == null ||
-                _compareUpdates(pendingUpdate, newestUpdate) > 0)
-        ? pendingUpdate
-        : newestUpdate;
+    final update = selectUpdateResult(
+      remoteUpdate: remoteUpdate,
+      hasValidRemoteConfig: hasValidRemoteConfig,
+      installedVersion: info.version,
+      installedVersionCode: currentCode,
+    );
     updateAvailable.value = update != null;
-    if (update == null) {
-      await preferences.remove(_pendingUpdateKey);
-    } else {
-      await preferences.setString(
-        _pendingUpdateKey,
-        jsonEncode({
-          'versionName': update.version,
-          'versionCode': update.versionCode,
-          'url': update.url,
-          'sha256': update.sha256Value,
-          'force': update.force,
-          'notes': update.notes,
-        }),
-      );
-    }
     await preferences.setBool(_updateAvailableKey, updateAvailable.value);
     return update;
-  }
-
-  static SalmonAppUpdate? _restorePendingUpdate(SharedPreferences preferences) {
-    final raw = preferences.getString(_pendingUpdateKey);
-    if (raw == null || raw.isEmpty) return null;
-    try {
-      return SalmonAppUpdate.fromJson(
-        Map<String, dynamic>.from(jsonDecode(raw) as Map),
-      );
-    } catch (_) {
-      return null;
-    }
   }
 
   @visibleForTesting
@@ -219,10 +191,45 @@ class SalmonUpdateService {
       update.versionCode > currentCode ||
       _compareVersion(update.version, currentVersion) > 0;
 
-  static int _compareUpdates(SalmonAppUpdate first, SalmonAppUpdate second) {
-    final versionComparison = _compareVersion(first.version, second.version);
-    if (versionComparison != 0) return versionComparison;
-    return first.versionCode.compareTo(second.versionCode);
+  @visibleForTesting
+  static SalmonAppUpdate? selectUpdateResult({
+    required SalmonAppUpdate? remoteUpdate,
+    required bool hasValidRemoteConfig,
+    required String installedVersion,
+    required int installedVersionCode,
+  }) {
+    final update = hasValidRemoteConfig ? remoteUpdate : null;
+    if (update == null ||
+        !isNewerThanInstalled(update, installedVersion, installedVersionCode)) {
+      return null;
+    }
+    return update;
+  }
+
+  @visibleForTesting
+  static Map<String, dynamic> selectMacOSUpdateConfig(
+    Map<String, dynamic> source, {
+    required bool arm64,
+  }) {
+    final selected = Map<String, dynamic>.from(source);
+    final suffix = arm64 ? 'arm64' : 'x64';
+    final url = source['${suffix}Url'];
+    final encodedUrl = source['${suffix}UrlBase64'];
+    if (url is String && url.trim().isNotEmpty) {
+      selected
+        ..['url'] = url
+        ..remove('urlBase64');
+    } else if (encodedUrl is String && encodedUrl.trim().isNotEmpty) {
+      selected
+        ..['urlBase64'] = encodedUrl
+        ..remove('url');
+    }
+    final hashKey = '${suffix}Sha256';
+    final hash = source[hashKey];
+    if (hash is String && hash.trim().isNotEmpty) {
+      selected['sha256'] = hash;
+    }
+    return selected;
   }
 
   static Future<void> _restoreAvailability() async {

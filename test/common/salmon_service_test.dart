@@ -80,6 +80,62 @@ void main() {
     },
   );
 
+  test('parses and applies a remote invitation URL', () {
+    const invitationUrl = 'https://swy1.sanweny.com/register?code=NoEYnmwU';
+    final config = SalmonRemoteConfig.parse(
+      jsonEncode({
+        'urls': ['https://main.example.com'],
+        'invitation': {'url': invitationUrl},
+      }),
+    );
+
+    expect(config.invitationUrl, invitationUrl);
+    expect(salmonInvitationCodeFromUrl(invitationUrl), 'NoEYnmwU');
+    expect(
+      buildSalmonInvitationUrl(invitationUrl, 'CUSTOM_CODE'),
+      'https://swy1.sanweny.com/register?code=CUSTOM_CODE',
+    );
+  });
+
+  test('ignores an unsafe remote invitation URL', () {
+    final config = SalmonRemoteConfig.parse(
+      '{"urls":["https://main.example.com"],'
+      '"invitation":{"url":"http://example.com/register?code=bad"}}',
+    );
+
+    expect(config.invitationUrl, isNull);
+  });
+
+  test('keeps extra invitation query parameters when changing the code', () {
+    const invitationUrl =
+        'https://example.com/register?source=app&code=old-code';
+
+    expect(
+      buildSalmonInvitationUrl(invitationUrl, 'new-code'),
+      'https://example.com/register?source=app&code=new-code',
+    );
+  });
+
+  test('uses the default invitation URL when remote config omits it', () async {
+    SharedPreferences.setMockInitialValues({});
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) => handler.resolve(
+            Response(
+              requestOptions: options,
+              data: '{"urls":["https://main.example.com"]}',
+            ),
+          ),
+        ),
+      );
+
+    expect(
+      await SalmonService(dio: dio).fetchInvitationUrl(),
+      salmonDefaultInvitationUrl,
+    );
+  });
+
   for (final supportUrl in [
     'http://support.example.com',
     'javascript:alert(1)',
@@ -105,6 +161,8 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       const supportUrl =
           'https://support.example.com/widget?website_token=new-inbox#/';
+      const invitationUrl =
+          'https://swy1.sanweny.com/register?code=REMOTE_CODE';
       var offline = false;
       var configRequests = 0;
       final dio = Dio()
@@ -122,6 +180,7 @@ void main() {
                   data: jsonEncode({
                     'urls': ['https://main.example.com'],
                     'customerService': {'url': supportUrl},
+                    'invitation': {'url': invitationUrl},
                   }),
                 ),
               );
@@ -131,11 +190,12 @@ void main() {
 
       expect(await SalmonService(dio: dio).fetchSupportUrl(), supportUrl);
       expect(await SalmonService(dio: dio).fetchSupportUrl(), supportUrl);
+      expect(await SalmonService(dio: dio).fetchInvitationUrl(), invitationUrl);
       expect(configRequests, 1);
       offline = true;
       expect(
-        await SalmonService(dio: dio).fetchSupportUrl(forceRefresh: true),
-        supportUrl,
+        await SalmonService(dio: dio).fetchInvitationUrl(forceRefresh: true),
+        invitationUrl,
       );
       expect(configRequests, 1 + salmonConfigUrls.length);
     },
