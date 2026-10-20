@@ -81,13 +81,13 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
     setState(() => updating = true);
     try {
       final profile = ref.read(currentProfileProvider);
-      if (profile == null) {
+      if (profile == null || profile.label == salmonProfileLabel) {
         await refreshSalmonProfile(ref);
       } else {
-        await ref.read(profilesActionProvider.notifier).updateProfile(profile);
+        await ref
+            .read(profilesActionProvider.notifier)
+            .updateProfile(profile, applyImmediately: true);
       }
-      await Future<void>.delayed(const Duration(milliseconds: 650));
-      await ref.read(proxiesActionProvider.notifier).updateGroups();
       if (mounted)
         ScaffoldMessenger.of(
           context,
@@ -108,10 +108,10 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
   }
 
   Future<void> _test(Group? group) async {
-    if (group == null || testing) return;
+    if (!mounted || group == null || testing) return;
     setState(() => testing = true);
     try {
-      await delayTest(_nodes(group), group.testUrl, group.name);
+      await delayTest(_nodes(group), group.testUrl, group.name, () => mounted);
     } finally {
       if (mounted) setState(() => testing = false);
     }
@@ -300,9 +300,10 @@ class SalmonNodeCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final delay = ref.watch(
+    final roundTrip = ref.watch(
       delayProvider(proxyName: proxy.name, testUrl: testUrl),
     );
+    final delay = estimatedOneWayDelay(roundTrip);
     final color = delay == null || delay == 0
         ? context.colorScheme.onSurfaceVariant
         : delay < 0
@@ -375,7 +376,7 @@ class SalmonNodeCard extends ConsumerWidget {
                     delay == null || delay == 0
                         ? '--'
                         : delay < 0
-                        ? 'Timeout'
+                        ? context.appLocalizations.timeout
                         : '$delay ms',
                     style: TextStyle(
                       fontSize: 11,

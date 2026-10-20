@@ -54,11 +54,216 @@ class AppLocalizations {
     return Localizations.of<AppLocalizations>(context, AppLocalizations);
   }
 
+  /// `Retry`
+  String get salmonRetry {
+    return Intl.message('Retry', name: 'salmonRetry', desc: '', args: []);
+  }
+
+  /// `Usage statistics`
+  String get salmonAnalyticsTitle {
+    return Intl.message(
+      'Usage statistics',
+      name: 'salmonAnalyticsTitle',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Sends app page visits and platform to our Matomo service using a random installation ID. Does not send accounts, passwords, subscription links or browsing traffic. The server receives your IP address. Turn off to stop sending.`
+  String get salmonAnalyticsDescription {
+    return Intl.message(
+      'Sends app page visits and platform to our Matomo service using a random installation ID. Does not send accounts, passwords, subscription links or browsing traffic. The server receives your IP address. Turn off to stop sending.',
+      name: 'salmonAnalyticsDescription',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unable to save the statistics setting. Try again.`
+  String get salmonAnalyticsSaveFailed {
+    return Intl.message(
+      'Unable to save the statistics setting. Try again.',
+      name: 'salmonAnalyticsSaveFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The local proxy service could not reconnect. Reopen the app and try again.`
+  String get salmonCoreRecoveryFailed {
+    return Intl.message(
+      'The local proxy service could not reconnect. Reopen the app and try again.',
+      name: 'salmonCoreRecoveryFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Creating order…`
+  String get salmonOrderCreating {
+    return Intl.message(
+      'Creating order…',
+      name: 'salmonOrderCreating',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Opening payment…`
+  String get salmonPaymentPreparing {
+    return Intl.message(
+      'Opening payment…',
+      name: 'salmonPaymentPreparing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Waiting for payment confirmation`
+  String get salmonPaymentWaiting {
+    return Intl.message(
+      'Waiting for payment confirmation',
+      name: 'salmonPaymentWaiting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Payment confirmed. Updating your plan and nodes…`
+  String get salmonPaymentSyncing {
+    return Intl.message(
+      'Payment confirmed. Updating your plan and nodes…',
+      name: 'salmonPaymentSyncing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Payment confirmation runs for up to 45 seconds. You may leave this page and check Order History later.`
+  String get salmonPaymentWaitingHint {
+    return Intl.message(
+      'Payment confirmation runs for up to 45 seconds. You may leave this page and check Order History later.',
+      name: 'salmonPaymentWaitingHint',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Subscription changed. Refresh nodes again.`
+  String get salmonSubscriptionChanged {
+    return Intl.message(
+      'Subscription changed. Refresh nodes again.',
+      name: 'salmonSubscriptionChanged',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The server returned no subscription URL. Check your subscription.`
+  String get salmonSubscriptionMissing {
+    return Intl.message(
+      'The server returned no subscription URL. Check your subscription.',
+      name: 'salmonSubscriptionMissing',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Nodes have not loaded. Try refreshing shortly.`
+  String get salmonNodesUnavailable {
+    return Intl.message(
+      'Nodes have not loaded. Try refreshing shortly.',
+      name: 'salmonNodesUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Your session expired. Sign in again.`
+  String get salmonSessionExpired {
+    return Intl.message(
+      'Your session expired. Sign in again.',
+      name: 'salmonSessionExpired',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unable to establish a secure connection. Check your network or try again later.`
+  String get salmonSecureConnectionFailed {
+    return Intl.message(
+      'Unable to establish a secure connection. Check your network or try again later.',
+      name: 'salmonSecureConnectionFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Connection failed. Check your network and try again.`
+  String get salmonConnectionFailed {
+    return Intl.message(
+      'Connection failed. Check your network and try again.',
+      name: 'salmonConnectionFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The server timed out. Try again later.`
+  String get salmonRequestTimeout {
+    return Intl.message(
+      'The server timed out. Try again later.',
+      name: 'salmonRequestTimeout',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The server returned an invalid order. Check Order History before trying again.`
+  String get salmonOrderInvalid {
+    return Intl.message(
+      'The server returned an invalid order. Check Order History before trying again.',
+      name: 'salmonOrderInvalid',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Signed in, but nodes could not be loaded. Tap Refresh on the nodes page.`
+  String get salmonNodeSyncFailed {
+    return Intl.message(
+      'Signed in, but nodes could not be loaded. Tap Refresh on the nodes page.',
+      name: 'salmonNodeSyncFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Payment succeeded. Nodes could not be refreshed. Refresh them on the nodes page.`
+  String get salmonPaidSyncFailed {
+    return Intl.message(
+      'Payment succeeded. Nodes could not be refreshed. Refresh them on the nodes page.',
+      name: 'salmonPaidSyncFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Welcome to Salmon`
   String get salmonWelcome {
     return Intl.message(
       'Welcome to Salmon',
       name: 'salmonWelcome',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unable to open the payment page. Please continue from Order History.`
+  String get salmonPaymentOpenFailed {
+    return Intl.message(
+      'Unable to open the payment page. Please continue from Order History.',
+      name: 'salmonPaymentOpenFailed',
       desc: '',
       args: [],
     );
@@ -149,14 +354,14 @@ class AppLocalizations {
     return Intl.message('Profile', name: 'profile', desc: '', args: []);
   }
 
-  /// `Profiles`
+  /// `Nodes`
   String get profiles {
-    return Intl.message('Profiles', name: 'profiles', desc: '', args: []);
+    return Intl.message('Nodes', name: 'profiles', desc: '', args: []);
   }
 
-  /// `Tools`
+  /// `Me`
   String get tools {
-    return Intl.message('Tools', name: 'tools', desc: '', args: []);
+    return Intl.message('Me', name: 'tools', desc: '', args: []);
   }
 
   /// `Logs`

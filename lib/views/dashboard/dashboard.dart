@@ -169,28 +169,49 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   Future<List<Map<String, dynamic>>> _loadNotices({
     bool forceRefresh = false,
   }) async {
+    final generation = salmonService.sessionGeneration;
     final value = await salmonService.fetchNotices(forceRefresh: forceRefresh);
+    if (!mounted || generation != salmonService.sessionGeneration) return value;
     salmonNoticeCache = value;
     salmonNoticeCacheAt = DateTime.now();
     return value;
   }
 
   Future<void> _refreshNotices() async {
-    final value = await _loadNotices(forceRefresh: true);
-    if (mounted) setState(() => _notices = Future.value(value));
+    final generation = salmonService.sessionGeneration;
+    try {
+      final value = await _loadNotices(forceRefresh: true);
+      if (!mounted || generation != salmonService.sessionGeneration) return;
+      setState(() {
+        _notices = Future.value(value);
+      });
+    } catch (_) {
+      // A background refresh must keep the currently displayed notice.
+    }
   }
 
   Future<void> _refreshCachedAccount() async {
-    final value = await _loadAccount(forceRefresh: true);
-    if (mounted) setState(() => _account = Future.value(value));
+    try {
+      final value = await _loadAccount(forceRefresh: true);
+      if (!mounted) return;
+      setState(() {
+        _account = Future.value(value);
+      });
+    } catch (_) {
+      // A background refresh must keep the currently displayed account.
+    }
   }
 
   Future<Map<String, dynamic>> _loadAccount({bool forceRefresh = false}) async {
+    final generation = salmonService.sessionGeneration;
     final values = await Future.wait([
       salmonService.fetchSubscribeInfo(forceRefresh: forceRefresh),
       salmonService.fetchUserInfo(forceRefresh: forceRefresh),
       salmonService.fetchPlans(forceRefresh: forceRefresh),
     ]);
+    if (!mounted || generation != salmonService.sessionGeneration) {
+      throw SalmonSessionExpiredException();
+    }
     final subscription = Map<String, dynamic>.from(values[0] as Map);
     final user = Map<String, dynamic>.from(values[1] as Map);
     final plans = values[2] as List<Map<String, dynamic>>;
@@ -280,12 +301,6 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
         return;
       }
       final rawExpiry = data['expired_at'] ?? data['expire'];
-      var total = num.tryParse('${data['transfer_enable'] ?? 0}') ?? 0;
-      final quotaGb = num.tryParse('${data['plan_quota_gb'] ?? 0}') ?? 0;
-      if (quotaGb > 0) total = quotaGb * 1024 * 1024 * 1024;
-      final used =
-          (num.tryParse('${data['u'] ?? 0}') ?? 0) +
-          (num.tryParse('${data['d'] ?? 0}') ?? 0);
       final noPlan = _hasNoPlan(data);
       final expired = !noPlan && _isExpired(rawExpiry);
       // Do not block at the 10% reminder threshold. Only an expired plan
@@ -370,15 +385,17 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     setState(() => _updating = true);
     try {
       final profile = ref.read(currentProfileProvider);
-      if (profile == null) {
+      if (profile == null || profile.label == salmonProfileLabel) {
         await refreshSalmonProfile(ref);
       } else {
-        await ref.read(profilesActionProvider.notifier).updateProfile(profile);
+        await ref
+            .read(profilesActionProvider.notifier)
+            .updateProfile(profile, applyImmediately: true);
       }
-      await Future<void>.delayed(const Duration(milliseconds: 650));
-      await ref.read(proxiesActionProvider.notifier).updateGroups();
       if (mounted) {
-        setState(() => _account = _loadAccount());
+        setState(() {
+          _account = _loadAccount();
+        });
         if (!silent) {
           ScaffoldMessenger.of(
             context,
@@ -521,12 +538,12 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
   }
 
   Future<void> _testNodes(Group? group) async {
-    if (group == null || _testing) return;
+    if (!mounted || group == null || _testing) return;
     final nodes = _nodes(group);
     if (nodes.isEmpty) return;
     setState(() => _testing = true);
     try {
-      await delayTest(nodes, group.testUrl, group.name);
+      await delayTest(nodes, group.testUrl, group.name, () => mounted);
     } finally {
       if (mounted) setState(() => _testing = false);
     }
@@ -542,6 +559,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
     if (_lastAutoTestNode == key) return;
     _lastAutoTestNode = key;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
       try {
         await proxyDelayTest(Proxy(name: nodeName, type: ''), group.testUrl);
       } catch (_) {
@@ -1161,7 +1179,7 @@ class _NodeTile extends ConsumerWidget {
         : displayDelay == 0
         ? '测速中'
         : displayDelay < 0
-        ? 'Timeout'
+        ? context.appLocalizations.timeout
         : '$displayDelay ms';
     final delayColor = displayDelay == null || displayDelay == 0
         ? context.colorScheme.onSurfaceVariant
@@ -1207,106 +1225,6 @@ class _NodeTile extends ConsumerWidget {
       onTap: onTap,
     );
   }
-}
-
-class _UsageBar extends StatelessWidget {
-  final String email;
-  final String used;
-  final String total;
-  final double ratio;
-
-  const _UsageBar({
-    required this.email,
-    required this.used,
-    required this.total,
-    required this.ratio,
-  });
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(26),
-      border: Border.all(color: const Color(0xFFE3EBF8)),
-      boxShadow: [
-        BoxShadow(
-          color: const Color(0xFF7B9BC5).withValues(alpha: .10),
-          blurRadius: 24,
-          offset: const Offset(0, 10),
-        ),
-      ],
-    ),
-    child: Column(
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF39BDF2), Color(0xFF65DDF4)],
-                ),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.set_meal_rounded,
-                color: Colors.white,
-                size: 27,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '欢迎回来',
-                    style: TextStyle(color: Color(0xFF8392A8), fontSize: 12),
-                  ),
-                  Text(
-                    email,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF173F46),
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEDF5FF),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Text(
-                '$used / $total',
-                style: const TextStyle(
-                  color: Color(0xFF527DB5),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: LinearProgressIndicator(
-            value: ratio,
-            minHeight: 8,
-            backgroundColor: const Color(0xFFEDF2FA),
-            color: const Color(0xFF2A9D98),
-          ),
-        ),
-      ],
-    ),
-  );
 }
 
 class _ConnectionHero extends StatelessWidget {
@@ -1448,7 +1366,7 @@ class _ConnectionHero extends StatelessWidget {
                             displayDelay == null || displayDelay == 0
                                 ? '-- ms'
                                 : displayDelay < 0
-                                ? 'Timeout'
+                                ? context.appLocalizations.timeout
                                 : '$displayDelay ms',
                             style: TextStyle(
                               color: displayDelay != null && displayDelay < 0
@@ -2369,98 +2287,4 @@ class _EnergyFlamePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _EnergyFlamePainter oldDelegate) =>
       oldDelegate.progress != progress || oldDelegate.glow != glow;
-}
-
-class _ConnectionTips extends StatelessWidget {
-  const _ConnectionTips();
-
-  @override
-  Widget build(BuildContext context) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [Color(0xFFF0F6FF), Color(0xFFF3FAFF)],
-      ),
-      borderRadius: BorderRadius.circular(24),
-      border: Border.all(color: const Color(0xFFE1EAF7)),
-    ),
-    child: const Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.lightbulb_rounded, color: Color(0xFF755BFF)),
-            SizedBox(width: 8),
-            Text(
-              '连接小贴士',
-              style: TextStyle(
-                color: Color(0xFF10233F),
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: 12),
-        Text('• 延迟数值越低，线路通常越流畅'),
-        SizedBox(height: 6),
-        Text('• 网络异常时，可前往节点页面更新并重新测速'),
-      ],
-    ),
-  );
-}
-
-class _ModeSelector extends StatelessWidget {
-  final Mode value;
-  final ValueChanged<Mode> onChanged;
-
-  const _ModeSelector({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    const labels = {
-      Mode.rule: '规则模式',
-      Mode.global: '全局模式',
-      Mode.direct: '直连模式',
-    };
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(5),
-      decoration: BoxDecoration(
-        color: context.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        children: Mode.values.map((mode) {
-          final active = value == mode;
-          return Expanded(
-            child: InkWell(
-              onTap: () => onChanged(mode),
-              borderRadius: BorderRadius.circular(14),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(
-                  color: active
-                      ? context.colorScheme.primary
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  labels[mode]!,
-                  style: TextStyle(
-                    color: active
-                        ? context.colorScheme.onPrimary
-                        : context.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
 }

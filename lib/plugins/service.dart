@@ -13,6 +13,8 @@ abstract mixin class ServiceListener {
   void onServiceCrash(String message) {}
 
   void onServiceRecovered() {}
+
+  void onServiceRecoveryFailed() {}
 }
 
 class Service {
@@ -48,6 +50,11 @@ class Service {
         case 'recovered':
           for (final listener in _listeners) {
             listener.onServiceRecovered();
+          }
+          break;
+        case 'recoveryFailed':
+          for (final listener in _listeners) {
+            listener.onServiceRecoveryFailed();
           }
           break;
         default:

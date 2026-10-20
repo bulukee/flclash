@@ -4,12 +4,15 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/services/salmon_profile_sync.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/widgets/salmon_load_error.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class PurchaseView extends ConsumerStatefulWidget {
-  const PurchaseView({super.key});
+  final SalmonService? service;
+
+  const PurchaseView({super.key, this.service});
 
   @override
   ConsumerState<PurchaseView> createState() => _PurchaseViewState();
@@ -19,6 +22,11 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
   late Future<List<Map<String, dynamic>>> _plans;
   late Future<List<Map<String, dynamic>>> _payments;
   bool _processing = false;
+  bool _confirmingPayment = false;
+  bool _syncingMembership = false;
+  bool _openingPayment = false;
+
+  SalmonService get _service => widget.service ?? salmonService;
 
   static const _cycles = <String, String>{
     'month_price': '月付',
@@ -49,7 +57,9 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
   Future<List<Map<String, dynamic>>> _loadPlans({
     bool forceRefresh = false,
   }) async {
-    final value = await salmonService.fetchPlans(forceRefresh: forceRefresh);
+    final generation = _service.sessionGeneration;
+    final value = await _service.fetchPlans(forceRefresh: forceRefresh);
+    if (!mounted || generation != _service.sessionGeneration) return value;
     salmonPlansCache = value;
     salmonStoreCacheAt = DateTime.now();
     return value;
@@ -57,10 +67,22 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
 
   Future<List<Map<String, dynamic>>> _loadPayments({
     bool forceRefresh = false,
+  }) {
+    final pending = _fetchPayments(forceRefresh: forceRefresh);
+    // This eager request can fail before the user opens the payment picker.
+    // Observe the error now; awaiting the original future still reports it.
+    pending.ignore();
+    return pending;
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchPayments({
+    required bool forceRefresh,
   }) async {
-    final value = await salmonService.fetchPaymentMethods(
+    final generation = _service.sessionGeneration;
+    final value = await _service.fetchPaymentMethods(
       forceRefresh: forceRefresh,
     );
+    if (!mounted || generation != _service.sessionGeneration) return value;
     salmonPaymentsCache = value;
     salmonStoreCacheAt = DateTime.now();
     return value;
@@ -107,12 +129,22 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
   }
 
   Future<void> _selectPayment(Map<String, dynamic> plan, String cycle) async {
+    if (_processing || _confirmingPayment) return;
     List<Map<String, dynamic>> payments;
     try {
-      payments = await _payments;
-    } catch (_) {
-      _payments = salmonService.fetchPaymentMethods(forceRefresh: true);
-      payments = await _payments;
+      try {
+        payments = await _payments;
+      } catch (_) {
+        _payments = _loadPayments(forceRefresh: true);
+        payments = await _payments;
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(salmonFriendlyError(error))));
+      }
+      return;
     }
     if (!mounted) return;
     if (payments.isEmpty) {
@@ -179,15 +211,17 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
                                   couponMessage = null;
                                 });
                                 try {
-                                  await salmonService.checkCoupon(
+                                  await _service.checkCoupon(
                                     planId: (plan['id'] as num).toInt(),
                                     code: code,
                                   );
+                                  if (!sheetContext.mounted) return;
                                   setSheetState(() {
                                     appliedCoupon = code;
                                     couponMessage = '优惠码已应用';
                                   });
                                 } catch (error) {
+                                  if (!sheetContext.mounted) return;
                                   setSheetState(() {
                                     appliedCoupon = null;
                                     couponMessage = salmonFriendlyError(
@@ -278,29 +312,40 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
     required int method,
     String? couponCode,
   }) async {
-    if (_processing) return;
+    if (_processing || _confirmingPayment) return;
     setState(() => _processing = true);
     try {
-      final tradeNo = await salmonService.createOrder(
+      final tradeNo = await _service.createOrder(
         planId: planId,
         cycle: cycle,
         couponCode: couponCode,
       );
-      final checkout = await salmonService.checkoutOrder(
+      if (!mounted) return;
+      setState(() => _openingPayment = true);
+      final checkout = await _service.checkoutOrder(
         tradeNo: tradeNo,
         method: method,
       );
       final type = int.tryParse('${checkout['type'] ?? 1}') ?? 1;
       final data = '${checkout['data'] ?? ''}';
       if (!mounted || data.isEmpty) return;
-      if (type == 1) {
+      setState(() {
+        _processing = false;
+        _confirmingPayment = true;
+      });
+      if (type == -1) {
+        // Balance payments complete without an external payment page.
+      } else if (type == 1) {
         final uri = Uri.parse(data);
-        await launchUrl(
+        final launched = await launchUrl(
           uri,
           mode: uri.scheme == 'http' || uri.scheme == 'https'
               ? LaunchMode.inAppBrowserView
               : LaunchMode.externalApplication,
         );
+        if (!launched) {
+          throw StateError(currentAppLocalizations.salmonPaymentOpenFailed);
+        }
       } else {
         await showDialog<void>(
           context: context,
@@ -332,20 +377,41 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
         );
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('正在确认支付结果…')));
-      final completed = await salmonService.waitForOrderCompleted(tradeNo);
+      final completed = await _service.waitForOrderCompleted(
+        tradeNo,
+        timeout: const Duration(seconds: 45),
+        shouldContinue: () => mounted,
+      );
       if (!mounted) return;
       if (completed) {
-        final session = await salmonService.restore();
-        if (session != null && session.subscribeUrl.isNotEmpty) {
-          await syncSalmonProfile(ref, session.subscribeUrl);
+        setState(() => _syncingMembership = true);
+        var synced = true;
+        try {
+          await _service.refreshMembershipData().timeout(
+            const Duration(seconds: 15),
+          );
+          final session = await _service.restore();
+          if (!mounted) return;
+          if (session != null && session.subscribeUrl.isNotEmpty) {
+            await syncSalmonProfile(
+              ref,
+              session.subscribeUrl,
+              expectedGeneration: session.generation,
+            ).timeout(const Duration(seconds: 20));
+          }
+        } catch (_) {
+          synced = false;
         }
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('支付成功，套餐已更新')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              synced
+                  ? '支付成功，套餐已更新'
+                  : context.appLocalizations.salmonPaidSyncFailed,
+            ),
+          ),
+        );
         setState(() {
           _plans = _loadPlans(forceRefresh: true);
           _payments = _loadPayments(forceRefresh: true);
@@ -364,7 +430,14 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
         );
       }
     } finally {
-      if (mounted) setState(() => _processing = false);
+      if (mounted) {
+        setState(() {
+          _processing = false;
+          _confirmingPayment = false;
+          _syncingMembership = false;
+          _openingPayment = false;
+        });
+      }
     }
   }
 
@@ -374,113 +447,173 @@ class _PurchaseViewState extends ConsumerState<PurchaseView> {
       title: context.appLocalizations.salmonPlans,
       body: Stack(
         children: [
-          FutureBuilder<List<Map<String, dynamic>>>(
-            future: _plans,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const _StoreLoading();
-              }
-              final plans = snapshot.data ?? const [];
-              return RefreshIndicator(
-                onRefresh: () async {
-                  setState(() {
-                    _plans = _loadPlans(forceRefresh: true);
-                    _payments = _loadPayments(forceRefresh: true);
-                  });
-                  await _plans;
-                },
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(18, 8, 18, 30),
-                  children: [
-                    Container(
-                      margin: const EdgeInsets.only(bottom: 20),
-                      padding: const EdgeInsets.all(22),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFFDCE7FA), Color(0xFFE8EDFF)],
-                        ),
-                        borderRadius: BorderRadius.circular(28),
-                        border: Border.all(color: const Color(0xFFDDE7F6)),
-                      ),
-                      child: const Row(
+          Column(
+            children: [
+              if (_confirmingPayment)
+                Card(
+                  child: ListTile(
+                    leading: Icon(
+                      _syncingMembership
+                          ? Icons.sync_rounded
+                          : Icons.schedule_rounded,
+                    ),
+                    title: Text(
+                      _syncingMembership
+                          ? context.appLocalizations.salmonPaymentSyncing
+                          : context.appLocalizations.salmonPaymentWaiting,
+                    ),
+                    subtitle: Text(
+                      context.appLocalizations.salmonPaymentWaitingHint,
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: FutureBuilder<List<Map<String, dynamic>>>(
+                  future: _plans,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return SalmonLoadError(
+                        error: snapshot.error!,
+                        onRetry: () => setState(() {
+                          _plans = _loadPlans(forceRefresh: true);
+                          _payments = _loadPayments(forceRefresh: true);
+                        }),
+                      );
+                    }
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const _StoreLoading();
+                    }
+                    final plans = snapshot.data ?? const [];
+                    return RefreshIndicator(
+                      onRefresh: () async {
+                        setState(() {
+                          _plans = _loadPlans(forceRefresh: true);
+                          _payments = _loadPayments(forceRefresh: true);
+                        });
+                        await _plans;
+                      },
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 30),
                         children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 20),
+                            padding: const EdgeInsets.all(22),
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFFDCE7FA), Color(0xFFE8EDFF)],
+                              ),
+                              borderRadius: BorderRadius.circular(28),
+                              border: Border.all(
+                                color: const Color(0xFFDDE7F6),
+                              ),
+                            ),
+                            child: const Row(
                               children: [
-                                Text(
-                                  '挑选你的专属套餐',
-                                  style: TextStyle(
-                                    color: Color(0xFF29496F),
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w900,
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '挑选你的专属套餐',
+                                        style: TextStyle(
+                                          color: Color(0xFF29496F),
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
+                                      SizedBox(height: 7),
+                                      Text(
+                                        '灵活周期 · 安心续费 · 即买即用',
+                                        style: TextStyle(
+                                          color: Color(0xFF7185A3),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                SizedBox(height: 7),
-                                Text(
-                                  '灵活周期 · 安心续费 · 即买即用',
-                                  style: TextStyle(color: Color(0xFF7185A3)),
+                                Icon(
+                                  Icons.auto_awesome_rounded,
+                                  size: 46,
+                                  color: Color(0xFF755BFF),
                                 ),
                               ],
                             ),
                           ),
-                          Icon(
-                            Icons.auto_awesome_rounded,
-                            size: 46,
-                            color: Color(0xFF755BFF),
-                          ),
+                          if (plans.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 60),
+                              child: Center(child: Text('暂时没有可购买的套餐')),
+                            )
+                          else
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final columns = constraints.maxWidth >= 1120
+                                    ? 3
+                                    : constraints.maxWidth >= 720
+                                    ? 2
+                                    : 1;
+                                const gap = 16.0;
+                                final width =
+                                    (constraints.maxWidth -
+                                        gap * (columns - 1)) /
+                                    columns;
+                                return Wrap(
+                                  spacing: gap,
+                                  runSpacing: gap,
+                                  children: plans.asMap().entries.map((entry) {
+                                    return SizedBox(
+                                      width: width,
+                                      child: _PlanCard(
+                                        plan: entry.value,
+                                        featured:
+                                            entry.key == 1 || plans.length == 1,
+                                        cycles: _availableCycles(entry.value),
+                                        description: _plainText(
+                                          entry.value['content'],
+                                        ),
+                                        money: _money,
+                                        onBuy: (period) =>
+                                            _selectPayment(entry.value, period),
+                                      ),
+                                    );
+                                  }).toList(),
+                                );
+                              },
+                            ),
                         ],
                       ),
-                    ),
-                    if (plans.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 60),
-                        child: Center(child: Text('暂时没有可购买的套餐')),
-                      )
-                    else
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final columns = constraints.maxWidth >= 1120
-                              ? 3
-                              : constraints.maxWidth >= 720
-                              ? 2
-                              : 1;
-                          const gap = 16.0;
-                          final width =
-                              (constraints.maxWidth - gap * (columns - 1)) /
-                              columns;
-                          return Wrap(
-                            spacing: gap,
-                            runSpacing: gap,
-                            children: plans.asMap().entries.map((entry) {
-                              return SizedBox(
-                                width: width,
-                                child: _PlanCard(
-                                  plan: entry.value,
-                                  featured: entry.key == 1 || plans.length == 1,
-                                  cycles: _availableCycles(entry.value),
-                                  description: _plainText(
-                                    entry.value['content'],
-                                  ),
-                                  money: _money,
-                                  onBuy: (period) =>
-                                      _selectPayment(entry.value, period),
-                                ),
-                              );
-                            }).toList(),
-                          );
-                        },
-                      ),
-                  ],
+                    );
+                  },
                 ),
-              );
-            },
+              ),
+            ],
           ),
           if (_processing)
             Positioned.fill(
               child: ColoredBox(
                 color: Colors.black.withValues(alpha: 0.28),
-                child: const Center(child: CircularProgressIndicator()),
+                child: Center(
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const CircularProgressIndicator(),
+                          const SizedBox(height: 16),
+                          Text(
+                            _openingPayment
+                                ? context
+                                      .appLocalizations
+                                      .salmonPaymentPreparing
+                                : context.appLocalizations.salmonOrderCreating,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
         ],

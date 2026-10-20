@@ -81,10 +81,19 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
           .read(coreActionProvider.notifier)
           .recoverCore();
       if (!recovered && mounted) {
-        globalState.showNotifier('代理核心恢复失败，请重试');
+        onServiceRecoveryFailed();
       }
     } finally {
       _recovering = false;
+    }
+  }
+
+  @override
+  void onServiceRecoveryFailed() {
+    if (mounted) {
+      globalState.showNotifier(
+        context.appLocalizations.salmonCoreRecoveryFailed,
+      );
     }
   }
 

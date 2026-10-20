@@ -165,6 +165,53 @@ void main() {
   });
 
   test(
+    'trusted HTTPS succeeds with custom resolution and original hostname',
+    () async {
+      final certificate = File(
+        'test/fixtures/salmon_dns/test-cert.pem',
+      ).readAsBytesSync();
+      final context = SecurityContext()
+        ..useCertificateChainBytes(certificate)
+        ..usePrivateKey('test/fixtures/salmon_dns/test-key.pem');
+      final trusted = SecurityContext(withTrustedRoots: false)
+        ..setTrustedCertificatesBytes(certificate);
+      final server = await HttpServer.bindSecure(
+        InternetAddress.loopbackIPv4,
+        0,
+        context,
+      );
+      final served = Completer<String?>();
+      final subscription = server.listen((request) async {
+        served.complete(request.headers.value(HttpHeaders.hostHeader));
+        request.response.write('secure');
+        await request.response.close();
+      });
+      final client = HttpOverrides.runWithHttpOverrides(
+        () => createSalmonHttpClient(
+          SalmonDnsResolver(
+            systemLookup: (_) async => [InternetAddress.loopbackIPv4],
+          ),
+          securityContext: trusted,
+        ),
+        _RealHttpOverrides(),
+      )..findProxy = (_) => 'DIRECT';
+      addTearDown(() async {
+        client.close(force: true);
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      final request = await client.getUrl(
+        Uri.parse('https://test.example:${server.port}/'),
+      );
+      final response = await request.close().timeout(
+        const Duration(seconds: 5),
+      );
+      expect(await utf8.decoder.bind(response).join(), 'secure');
+      expect(await served.future, 'test.example:${server.port}');
+    },
+  );
+
+  test(
     'rejects an untrusted HTTPS certificate after custom resolution',
     () async {
       final context = SecurityContext()
@@ -193,6 +240,7 @@ void main() {
         () => createSalmonHttpClient(
           SalmonDnsResolver(
             systemLookup: (_) async => [InternetAddress.loopbackIPv4],
+            encryptedLookup: (_) async => [InternetAddress.loopbackIPv4],
           ),
         ),
         _RealHttpOverrides(),
@@ -212,4 +260,36 @@ void main() {
       expect(receivedRequest, isFalse);
     },
   );
+
+  test('retries encrypted DNS when the system answer cannot connect', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      request.response.write('recovered');
+      await request.response.close();
+    });
+    var fallbacks = 0;
+    final client = HttpOverrides.runWithHttpOverrides(
+      () => createSalmonHttpClient(
+        SalmonDnsResolver(
+          systemLookup: (_) async => [InternetAddress('127.0.0.2')],
+          encryptedLookup: (_) async {
+            fallbacks++;
+            return [InternetAddress.loopbackIPv4];
+          },
+        ),
+      ),
+      _RealHttpOverrides(),
+    )..findProxy = (_) => 'DIRECT';
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final request = await client.getUrl(
+      Uri.parse('http://test.example:${server.port}/'),
+    );
+    final response = await request.close();
+    expect(await utf8.decoder.bind(response).join(), 'recovered');
+    expect(fallbacks, 1);
+  });
 }

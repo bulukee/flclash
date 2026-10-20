@@ -479,7 +479,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "profileUrlNullValidationDesc": MessageLookupByLibrary.simpleMessage(
       "请输入配置URL",
     ),
-    "profiles": MessageLookupByLibrary.simpleMessage("线路"),
+    "profiles": MessageLookupByLibrary.simpleMessage("节点"),
     "profilesSort": MessageLookupByLibrary.simpleMessage("配置排序"),
     "project": MessageLookupByLibrary.simpleMessage("项目"),
     "providers": MessageLookupByLibrary.simpleMessage("提供者"),
@@ -631,8 +631,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleProviders": MessageLookupByLibrary.simpleMessage("规则集"),
     "ruleSet": MessageLookupByLibrary.simpleMessage("规则集"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("规则目标"),
+    "salmonAnalyticsDescription": MessageLookupByLibrary.simpleMessage(
+      "使用随机安装标识向自有 Matomo 统计服务发送应用页面访问及平台信息，不发送账号、密码、订阅链接或上网流量。统计服务器会收到网络 IP，可随时关闭。",
+    ),
+    "salmonAnalyticsSaveFailed": MessageLookupByLibrary.simpleMessage(
+      "使用统计设置保存失败，请重试",
+    ),
+    "salmonAnalyticsTitle": MessageLookupByLibrary.simpleMessage("使用统计"),
     "salmonBuyNow": MessageLookupByLibrary.simpleMessage("购买"),
     "salmonConnected": MessageLookupByLibrary.simpleMessage("安全连接中"),
+    "salmonConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "网络连接失败，请检查网络后重试",
+    ),
+    "salmonCoreRecoveryFailed": MessageLookupByLibrary.simpleMessage(
+      "本地代理服务暂时无法连接，请重新打开应用后重试",
+    ),
     "salmonDirectMode": MessageLookupByLibrary.simpleMessage("直连"),
     "salmonDisconnected": MessageLookupByLibrary.simpleMessage("尚未连接"),
     "salmonFrom": MessageLookupByLibrary.simpleMessage("最低"),
@@ -648,13 +661,53 @@ class MessageLookup extends MessageLookupByLibrary {
     "salmonMode": MessageLookupByLibrary.simpleMessage("代理模式"),
     "salmonNoPlans": MessageLookupByLibrary.simpleMessage("暂时没有可购买的套餐"),
     "salmonNode": MessageLookupByLibrary.simpleMessage("当前节点"),
+    "salmonNodeSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "登录成功，但节点加载失败，请到节点页面点击更新",
+    ),
+    "salmonNodesUnavailable": MessageLookupByLibrary.simpleMessage(
+      "节点尚未加载，请稍后点击更新",
+    ),
+    "salmonOrderCreating": MessageLookupByLibrary.simpleMessage("正在创建订单…"),
+    "salmonOrderInvalid": MessageLookupByLibrary.simpleMessage(
+      "服务器返回的订单无效，请先查看订单记录再重试",
+    ),
+    "salmonPaidSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "支付成功，但节点更新失败，请到节点页面点击更新",
+    ),
+    "salmonPaymentOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "无法打开支付页面，请在订单记录中继续支付",
+    ),
+    "salmonPaymentPreparing": MessageLookupByLibrary.simpleMessage("正在获取支付页面…"),
+    "salmonPaymentSyncing": MessageLookupByLibrary.simpleMessage(
+      "支付已到账，正在同步套餐和节点…",
+    ),
+    "salmonPaymentWaiting": MessageLookupByLibrary.simpleMessage("正在等待支付到账确认"),
+    "salmonPaymentWaitingHint": MessageLookupByLibrary.simpleMessage(
+      "自动确认最多等待45秒，可离开此页，稍后在账户的订单记录中查看。",
+    ),
     "salmonPlan": MessageLookupByLibrary.simpleMessage("网络套餐"),
     "salmonPlans": MessageLookupByLibrary.simpleMessage("套餐购买"),
     "salmonPlansSubtitle": MessageLookupByLibrary.simpleMessage("高速稳定，随时畅享网络"),
     "salmonPlansTitle": MessageLookupByLibrary.simpleMessage("选择适合您的套餐"),
+    "salmonRequestTimeout": MessageLookupByLibrary.simpleMessage(
+      "服务器响应超时，请稍后重试",
+    ),
     "salmonRequiredField": MessageLookupByLibrary.simpleMessage("此项不能为空"),
+    "salmonRetry": MessageLookupByLibrary.simpleMessage("重试"),
     "salmonRuleMode": MessageLookupByLibrary.simpleMessage("规则"),
+    "salmonSecureConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "无法建立安全连接，请检查网络或稍后重试",
+    ),
     "salmonSelectNode": MessageLookupByLibrary.simpleMessage("选择节点"),
+    "salmonSessionExpired": MessageLookupByLibrary.simpleMessage(
+      "登录状态已失效，请重新登录",
+    ),
+    "salmonSubscriptionChanged": MessageLookupByLibrary.simpleMessage(
+      "订阅已切换，请重新更新节点",
+    ),
+    "salmonSubscriptionMissing": MessageLookupByLibrary.simpleMessage(
+      "服务器未返回订阅地址，请检查账号订阅状态",
+    ),
     "salmonTapConnect": MessageLookupByLibrary.simpleMessage("点击开启安全连接"),
     "salmonTapDisconnect": MessageLookupByLibrary.simpleMessage("点击断开连接"),
     "salmonTapToTest": MessageLookupByLibrary.simpleMessage("点击测试延迟"),

@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -45,25 +46,50 @@ Stream<int> proxyGroupsCount(Ref ref, int profileId) {
 
 @Riverpod(keepAlive: true)
 class Profiles extends _$Profiles {
+  final _pendingProfiles = <int, Profile>{};
+
   @override
   List<Profile> build() {
-    return ref.watch(profilesStreamProvider).value ?? [];
+    var profiles = ref.watch(profilesStreamProvider).value ?? <Profile>[];
+    // Database stream events may predate an optimistic write. Keep the new
+    // profile visible until the stream acknowledges that exact revision.
+    for (final entry in _pendingProfiles.entries.toList()) {
+      if (profiles.getProfile(entry.key) == entry.value) {
+        _pendingProfiles.remove(entry.key);
+      } else {
+        profiles = profiles.copyAndPut(entry.value, (p) => p.id == entry.key);
+      }
+    }
+    return profiles;
   }
 
   void put(Profile profile) {
+    unawaited(putAndWait(profile));
+  }
+
+  Future<void> putAndWait(Profile profile) async {
     final previous = List<Profile>.from(state);
-    final newProfile = previous.optimizeLabel(profile);
+    final newProfile = previous.optimizeLabel(profile.withDatabasePrecision);
+    _pendingProfiles[profile.id] = newProfile;
     state = previous.copyAndPut(newProfile, (item) => item.id == newProfile.id);
-    unawaited(
-      withRollback(
-        snapshot: previous,
-        action: () => database.profiles.put(newProfile.toCompanion()),
-        rollback: (v) => state = v,
-      ),
+    await withRollback(
+      snapshot: previous,
+      action: () => persistProfile(newProfile),
+      rollback: (v) {
+        if (_pendingProfiles[profile.id] != newProfile) return;
+        _pendingProfiles.remove(profile.id);
+        state = v;
+      },
     );
   }
 
+  @protected
+  Future<void> persistProfile(Profile profile) async {
+    await database.profiles.put(profile.toCompanion());
+  }
+
   void del(int id) {
+    _pendingProfiles.remove(id);
     final previous = List<Profile>.from(state);
     state = previous.where((e) => e.id != id).toList();
     unawaited(
@@ -79,17 +105,7 @@ class Profiles extends _$Profiles {
     final index = state.indexWhere((element) => element.id == profileId);
     if (index == -1) return;
     final newProfile = builder(state[index]);
-    final previous = List<Profile>.from(state);
-    final next = List<Profile>.from(previous);
-    next[index] = newProfile;
-    state = next;
-    unawaited(
-      withRollback(
-        snapshot: previous,
-        action: () => database.profiles.put(newProfile.toCompanion()),
-        rollback: (v) => state = v,
-      ),
-    );
+    put(newProfile);
   }
 
   void setAndReorder(List<Profile> profiles) {

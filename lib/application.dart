@@ -11,6 +11,7 @@ import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/services/salmon_update_service.dart';
+import 'package:fl_clash/services/salmon_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -58,6 +59,7 @@ class ApplicationState extends ConsumerState<Application> {
   @override
   void initState() {
     super.initState();
+    unawaited(_loadRemoteAnalytics());
     WidgetsBinding.instance.addPostFrameCallback((timeStamp) async {
       if (globalState.navigatorKey.currentContext != null) {
         _scheduleUpdateCheck();
@@ -69,6 +71,14 @@ class ApplicationState extends ConsumerState<Application> {
       _initLink();
       app?.initShortcuts();
     });
+  }
+
+  Future<void> _loadRemoteAnalytics() async {
+    try {
+      await salmonService.fetchBaseUrls(forceRefresh: true);
+    } catch (_) {
+      // Optional analytics configuration must never block app startup.
+    }
   }
 
   void _scheduleUpdateCheck() {

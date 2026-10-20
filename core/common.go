@@ -253,19 +253,26 @@ func applyConfig(params *SetupParams) error {
 	runtime.GC()
 	runLock.Lock()
 	defer runLock.Unlock()
-	var err error
-	constant.DefaultTestURL = params.TestURL
-	currentConfig, err = executor.ParseWithPath(filepath.Join(constant.Path.HomeDir(), "config.yaml"))
+	previousNames := append([]string(nil), config.GetProxyNameList()...)
+	nextConfig, err := executor.ParseWithPath(filepath.Join(constant.Path.HomeDir(), "config.yaml"))
 	if err != nil {
-		currentConfig, _ = config.ParseRawConfig(config.DefaultRawConfig())
+		config.SetProxyNameList(previousNames)
+		// Bootstrap listeners safely, but never replace a loaded subscription on failure.
+		if currentConfig == nil {
+			currentConfig, _ = config.ParseRawConfig(config.DefaultRawConfig())
+			hub.ApplyConfig(currentConfig)
+		}
+		return err
 	}
+	constant.DefaultTestURL = params.TestURL
+	currentConfig = nextConfig
 	hub.ApplyConfig(currentConfig)
 	patchSelectGroup(params.SelectedMap)
 	updateListeners()
 	if updater.GeoAutoUpdate() {
 		updater.RegisterGeoUpdaterWithCancel()
 	}
-	return err
+	return nil
 }
 
 func UnmarshalJson(data []byte, v any) error {

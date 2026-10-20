@@ -8,6 +8,91 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  for (final days in [15, 90, 365]) {
+    test(
+      'a saved login remains available after $days days without a client TTL',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'salmon_base_url': 'https://saved.example.com',
+          'salmon_auth_data': 'session-token',
+          'salmon_subscribe_url': 'https://saved.example.com/sub',
+          'salmon_base_urls_cache_at': DateTime.now()
+              .subtract(Duration(days: days))
+              .millisecondsSinceEpoch,
+        });
+        final dio = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (_, _) =>
+                  fail('Cached login should not await network'),
+            ),
+          );
+        final service = SalmonService(dio: dio);
+        expect((await service.restore())?.authData, 'session-token');
+        expect(
+          (await SalmonService(dio: dio).restore())?.authData,
+          'session-token',
+        );
+      },
+    );
+  }
+
+  test(
+    'a blocked domain mixed with an auth rejection does not erase login',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'salmon_base_url': 'https://saved.example.com',
+        'salmon_auth_data': 'session-token',
+        'salmon_subscribe_url': 'https://saved.example.com/sub',
+        'salmon_base_urls_cache_source': salmonConfigUrl,
+        'salmon_base_urls_cache': jsonEncode([
+          'https://saved.example.com',
+          'https://blocked.example.com',
+        ]),
+      });
+      final dio = Dio()
+        ..interceptors.add(
+          InterceptorsWrapper(
+            onRequest: (options, handler) {
+              final unauthorized = options.uri.host == 'saved.example.com';
+              handler.reject(
+                DioException(
+                  requestOptions: options,
+                  type: unauthorized
+                      ? DioExceptionType.badResponse
+                      : DioExceptionType.connectionError,
+                  response: unauthorized
+                      ? Response(requestOptions: options, statusCode: 401)
+                      : null,
+                ),
+              );
+            },
+          ),
+        );
+      final service = SalmonService(dio: dio);
+      expect((await service.refreshSession())?.authData, 'session-token');
+      expect(
+        (await SharedPreferences.getInstance()).getString('salmon_auth_data'),
+        'session-token',
+      );
+    },
+  );
+
+  test(
+    'logout clears the previously selected node and in-memory account data',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      salmonCurrentNodeName = 'old-node';
+      salmonAccountCache = {'email': 'old@example.com'};
+      salmonPlansCache = [
+        {'id': 1},
+      ];
+      await SalmonService().clear();
+      expect(salmonCurrentNodeName, isNull);
+      expect(salmonAccountCache, isNull);
+      expect(salmonPlansCache, isNull);
+    },
+  );
   for (final kind in ['account', 'subscription']) {
     test('rejects malformed $kind data instead of reporting no plan', () async {
       SharedPreferences.setMockInitialValues({
@@ -197,7 +282,7 @@ void main() {
         await SalmonService(dio: dio).fetchInvitationUrl(forceRefresh: true),
         invitationUrl,
       );
-      expect(configRequests, 1 + salmonConfigUrls.length);
+      expect(configRequests, 1 + salmonConfigUrls.length * 2);
     },
   );
 
@@ -243,38 +328,36 @@ void main() {
   });
 
   test(
-    'login uses the saved endpoint before refreshing remote config',
+    'login prefers a saved domain only when GitCode still lists it',
     () async {
       SharedPreferences.setMockInitialValues({
         'salmon_base_url': 'https://saved.example.com',
       });
-      final requests = <String>[];
+      final requests = <Uri>[];
       final dio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
-              requests.add(options.uri.toString());
-              if (options.uri.path.endsWith('/passport/auth/login')) {
-                handler.resolve(
-                  Response(
-                    requestOptions: options,
-                    data: {
-                      'data': {'auth_data': 'session-token'},
-                    },
-                  ),
-                );
-              } else {
-                handler.resolve(
-                  Response(
-                    requestOptions: options,
-                    data: {
-                      'data': {
-                        'subscribe_url': 'https://saved.example.com/sub',
-                      },
-                    },
-                  ),
-                );
-              }
+              requests.add(options.uri);
+              handler.resolve(
+                Response(
+                  requestOptions: options,
+                  data: options.uri.host == 'raw.gitcode.com'
+                      ? jsonEncode({
+                          'urls': [
+                            'https://first.example.com',
+                            'https://saved.example.com',
+                          ],
+                        })
+                      : options.uri.path.endsWith('/passport/auth/login')
+                      ? {
+                          'data': {'auth_data': 'session-token'},
+                        }
+                      : {
+                          'data': {'subscribe_url': '/sub'},
+                        },
+                ),
+              );
             },
           ),
         );
@@ -284,14 +367,13 @@ void main() {
       ).login(account: 'user@example.com', password: 'secret');
 
       expect(session.baseUrl, 'https://saved.example.com');
-      expect(
-        requests.first,
-        'https://saved.example.com/api/v1/passport/auth/login',
-      );
-      expect(requests, hasLength(2));
+      expect(requests.map((uri) => uri.host), [
+        'raw.gitcode.com',
+        'saved.example.com',
+        'saved.example.com',
+      ]);
     },
   );
-
   test(
     'restore returns the cached session before network validation',
     () async {
@@ -320,22 +402,235 @@ void main() {
     },
   );
 
+  for (final failure in [
+    'connection',
+    'timeout',
+    '403',
+    '404',
+    '503',
+    'invalid',
+  ]) {
+    test(
+      'login skips a GitCode domain after $failure and saves a working one',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'salmon_base_url': 'https://ap.swywl.com',
+          'salmon_base_urls_cache': jsonEncode(['https://old.example.com']),
+        });
+        final requests = <Uri>[];
+        final dio = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                requests.add(options.uri);
+                if (options.uri.host == 'raw.gitcode.com') {
+                  expect(options.data, isNull);
+                  handler.resolve(
+                    Response(
+                      requestOptions: options,
+                      data: jsonEncode({
+                        'urls': [
+                          'https://blocked.example.com',
+                          'https://working.example.com/',
+                          'https://working.example.com',
+                          'https://unused.example.com',
+                        ],
+                      }),
+                    ),
+                  );
+                } else if (options.uri.host == 'blocked.example.com') {
+                  if (failure == 'invalid') {
+                    handler.resolve(
+                      Response(
+                        requestOptions: options,
+                        data: '<html>Blocked</html>',
+                      ),
+                    );
+                    return;
+                  }
+                  final status = int.tryParse(failure);
+                  handler.reject(
+                    DioException(
+                      requestOptions: options,
+                      response: status == null
+                          ? null
+                          : Response(
+                              requestOptions: options,
+                              statusCode: status,
+                            ),
+                      type: status != null
+                          ? DioExceptionType.badResponse
+                          : failure == 'timeout'
+                          ? DioExceptionType.connectionTimeout
+                          : DioExceptionType.connectionError,
+                    ),
+                  );
+                } else {
+                  expect(options.uri.host, 'working.example.com');
+                  handler.resolve(
+                    Response(
+                      requestOptions: options,
+                      data: options.uri.path.endsWith('/passport/auth/login')
+                          ? {
+                              'data': {'auth_data': 'new-token'},
+                            }
+                          : {
+                              'data': {'subscribe_url': '/sub'},
+                            },
+                    ),
+                  );
+                }
+              },
+            ),
+          );
+
+        final session = await SalmonService(
+          dio: dio,
+        ).login(account: 'user@example.com', password: 'secret');
+
+        expect(session.baseUrl, 'https://working.example.com');
+        expect(session.subscribeUrl, 'https://working.example.com/sub');
+        expect(requests.map((uri) => uri.host), [
+          'raw.gitcode.com',
+          'blocked.example.com',
+          'working.example.com',
+          'working.example.com',
+        ]);
+        final preferences = await SharedPreferences.getInstance();
+        expect(preferences.getString('salmon_base_url'), session.baseUrl);
+        expect(
+          preferences.getString('salmon_base_urls_cache_source'),
+          salmonConfigUrl,
+        );
+      },
+    );
+  }
+
+  for (final source in [
+    null,
+    'https://raw.githubusercontent.com/old/config.json',
+    salmonConfigUrl,
+  ]) {
+    test(
+      'GitCode outage only reuses a GitCode cache (source: $source)',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'salmon_base_url': 'https://ap.swywl.com',
+          'salmon_base_urls_cache': jsonEncode(['https://cached.example.com']),
+          'salmon_base_urls_cache_source': ?source,
+          'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+        });
+        final requests = <Uri>[];
+        final dio = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                requests.add(options.uri);
+                if (options.uri.host == 'raw.gitcode.com') {
+                  handler.reject(
+                    DioException(
+                      requestOptions: options,
+                      type: DioExceptionType.connectionError,
+                    ),
+                  );
+                } else {
+                  expect(source, salmonConfigUrl);
+                  expect(options.uri.host, 'cached.example.com');
+                  handler.resolve(
+                    Response(
+                      requestOptions: options,
+                      data: options.uri.path.endsWith('/passport/auth/login')
+                          ? {
+                              'data': {'auth_data': 'cached-token'},
+                            }
+                          : {
+                              'data': {'subscribe_url': '/sub'},
+                            },
+                    ),
+                  );
+                }
+              },
+            ),
+          );
+        final login = SalmonService(
+          dio: dio,
+        ).login(account: 'user@example.com', password: 'secret');
+        if (source == salmonConfigUrl) {
+          expect((await login).baseUrl, 'https://cached.example.com');
+          expect(requests, hasLength(4));
+        } else {
+          await expectLater(login, throwsStateError);
+          expect(requests.map((uri) => uri.host), [
+            'raw.gitcode.com',
+            'raw.gitcode.com',
+          ]);
+        }
+      },
+    );
+  }
+
+  for (final config in [
+    '{"urls":["https://1111.swyyy.com","http://unsafe.example.com"]}',
+    '{"urls":[]}',
+    '<html>Blocked</html>',
+  ]) {
+    test(
+      'invalid GitCode config never falls back to a saved domain: $config',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'salmon_base_url': 'https://ap.swywl.com',
+        });
+        final requests = <Uri>[];
+        final dio = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                requests.add(options.uri);
+                handler.resolve(
+                  Response(requestOptions: options, data: config),
+                );
+              },
+            ),
+          );
+        await expectLater(
+          SalmonService(
+            dio: dio,
+          ).login(account: 'user@example.com', password: 'secret'),
+          throwsStateError,
+        );
+        expect(requests.map((uri) => uri.host), [
+          'raw.gitcode.com',
+          if (config !=
+              '{"urls":["https://1111.swyyy.com","http://unsafe.example.com"]}')
+            'raw.gitcode.com',
+        ]);
+      },
+    );
+  }
+
   test(
-    'first login reaches the bootstrap endpoint without config fetch',
+    'login replaces a stale GitCode cache before trying any API domain',
     () async {
-      SharedPreferences.setMockInitialValues({});
-      final requests = <String>[];
+      SharedPreferences.setMockInitialValues({
+        'salmon_base_url': 'https://stale.example.com',
+        'salmon_base_urls_cache_source': salmonConfigUrl,
+        'salmon_base_urls_cache': jsonEncode(['https://stale.example.com']),
+        'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
+      });
+      final requests = <Uri>[];
       final dio = Dio()
         ..interceptors.add(
           InterceptorsWrapper(
             onRequest: (options, handler) {
-              requests.add(options.uri.toString());
+              requests.add(options.uri);
               handler.resolve(
                 Response(
                   requestOptions: options,
-                  data: options.uri.path.endsWith('/passport/auth/login')
+                  data: options.uri.host == 'raw.gitcode.com'
+                      ? '{"urls":["https://fresh.example.com"]}'
+                      : options.uri.path.endsWith('/passport/auth/login')
                       ? {
-                          'data': {'auth_data': 'new-token'},
+                          'data': {'auth_data': 'fresh-token'},
                         }
                       : {
                           'data': {'subscribe_url': '/sub'},
@@ -345,123 +640,23 @@ void main() {
             },
           ),
         );
-
       final session = await SalmonService(
         dio: dio,
       ).login(account: 'user@example.com', password: 'secret');
-
-      expect(session.baseUrl, salmonBootstrapBaseUrl);
-      expect(
-        requests.first,
-        '$salmonBootstrapBaseUrl/api/v1/passport/auth/login',
-      );
-      expect(requests, hasLength(2));
+      expect(session.baseUrl, 'https://fresh.example.com');
+      expect(requests.map((uri) => uri.host), [
+        'raw.gitcode.com',
+        'fresh.example.com',
+        'fresh.example.com',
+      ]);
     },
   );
-
-  test('login skips the retired endpoint in saved and remote caches', () async {
-    SharedPreferences.setMockInitialValues({
-      'salmon_base_url': 'https://1111.swyyy.com',
-      'salmon_base_urls_cache': jsonEncode([
-        'https://1111.swyyy.com',
-        'https://fresh.example.com',
-      ]),
-    });
-    final requests = <String>[];
-    final dio = Dio()
-      ..interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (options, handler) {
-            requests.add(options.uri.toString());
-            handler.resolve(
-              Response(
-                requestOptions: options,
-                data: options.uri.path.endsWith('/passport/auth/login')
-                    ? {
-                        'data': {'auth_data': 'new-token'},
-                      }
-                    : {
-                        'data': {'subscribe_url': '/sub'},
-                      },
-              ),
-            );
-          },
-        ),
-      );
-
-    final session = await SalmonService(
-      dio: dio,
-    ).login(account: 'user@example.com', password: 'secret');
-
-    expect(session.baseUrl, salmonBootstrapBaseUrl);
-    expect(requests.every((url) => !url.contains('1111.swyyy.com')), isTrue);
-  });
-
-  test('login refreshes config after cached endpoints fail', () async {
-    SharedPreferences.setMockInitialValues({
-      'salmon_base_url': 'https://stale.example.com',
-    });
-    final requests = <String>[];
-    final dio = Dio()
-      ..interceptors.add(
-        InterceptorsWrapper(
-          onRequest: (options, handler) {
-            requests.add(options.uri.toString());
-            if (salmonConfigUrls.contains(
-              options.uri.toString().split('?').first,
-            )) {
-              handler.resolve(
-                Response(
-                  requestOptions: options,
-                  data: '{"urls":["https://fresh.example.com"]}',
-                ),
-              );
-            } else if (options.uri.host == 'fresh.example.com') {
-              handler.resolve(
-                Response(
-                  requestOptions: options,
-                  data: options.uri.path.endsWith('/passport/auth/login')
-                      ? {
-                          'data': {'auth_data': 'fresh-token'},
-                        }
-                      : {
-                          'data': {'subscribe_url': '/sub'},
-                        },
-                ),
-              );
-            } else {
-              handler.reject(
-                DioException(
-                  requestOptions: options,
-                  type: DioExceptionType.connectionError,
-                ),
-              );
-            }
-          },
-        ),
-      );
-
-    final session = await SalmonService(
-      dio: dio,
-    ).login(account: 'user@example.com', password: 'secret');
-
-    expect(session.baseUrl, 'https://fresh.example.com');
-    expect(
-      requests.first,
-      'https://stale.example.com/api/v1/passport/auth/login',
-    );
-    expect(
-      requests.indexWhere((url) => url.startsWith(salmonConfigUrl)),
-      greaterThan(0),
-    );
-    expect(requests.last, 'https://fresh.example.com/api/v1/user/getSubscribe');
-  });
-
   test('in-flight refresh cannot restore a session after logout', () async {
     SharedPreferences.setMockInitialValues({
       'salmon_base_url': 'https://saved.example.com',
       'salmon_auth_data': 'old-token',
       'salmon_subscribe_url': 'https://saved.example.com/old-sub',
+      'salmon_base_urls_cache_source': salmonConfigUrl,
       'salmon_base_urls_cache': jsonEncode(['https://saved.example.com']),
       'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
     });
@@ -534,9 +729,10 @@ void main() {
 
   test('stale refresh failure cannot clear a same-token re-login', () async {
     SharedPreferences.setMockInitialValues({
-      'salmon_base_url': salmonBootstrapBaseUrl,
+      'salmon_base_url': 'https://current.example.com',
       'salmon_auth_data': 'old-token',
-      'salmon_base_urls_cache': jsonEncode([salmonBootstrapBaseUrl]),
+      'salmon_base_urls_cache_source': salmonConfigUrl,
+      'salmon_base_urls_cache': jsonEncode(['https://current.example.com']),
       'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
     });
     final requestStarted = Completer<void>();
@@ -606,11 +802,75 @@ void main() {
     final preferences = await SharedPreferences.getInstance();
     expect(newSession.authData, 'old-token');
     expect(preferences.getString('salmon_auth_data'), 'old-token');
-    expect(preferences.getString('salmon_base_url'), salmonBootstrapBaseUrl);
+    expect(
+      preferences.getString('salmon_base_url'),
+      'https://current.example.com',
+    );
   });
 
+  for (final firstFailure in ['config', 'login']) {
+    test(
+      'one login press recovers a transient $firstFailure failure',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        var configAttempts = 0;
+        var loginAttempts = 0;
+        final dio = Dio()
+          ..interceptors.add(
+            InterceptorsWrapper(
+              onRequest: (options, handler) {
+                final isConfig = options.uri.host == 'raw.gitcode.com';
+                final isLogin = options.uri.path.endsWith(
+                  '/passport/auth/login',
+                );
+                if (isConfig) configAttempts++;
+                if (isLogin) loginAttempts++;
+                if ((firstFailure == 'config' &&
+                        isConfig &&
+                        configAttempts == 1) ||
+                    (firstFailure == 'login' &&
+                        isLogin &&
+                        loginAttempts == 1)) {
+                  handler.reject(
+                    DioException(
+                      requestOptions: options,
+                      type: DioExceptionType.connectionError,
+                    ),
+                  );
+                  return;
+                }
+                handler.resolve(
+                  Response(
+                    requestOptions: options,
+                    data: isConfig
+                        ? '{"urls":["https://working.example.com"]}'
+                        : isLogin
+                        ? {
+                            'data': {'auth_data': 'token'},
+                          }
+                        : {
+                            'data': {'subscribe_url': '/sub'},
+                          },
+                  ),
+                );
+              },
+            ),
+          );
+        final session = await SalmonService(
+          dio: dio,
+        ).login(account: 'user@example.com', password: 'secret');
+        expect(session.baseUrl, 'https://working.example.com');
+        expect(configAttempts, firstFailure == 'config' ? 2 : 1);
+        expect(loginAttempts, firstFailure == 'login' ? 2 : 1);
+      },
+    );
+  }
+
   test('credential rejection does not masquerade as a network error', () async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'salmon_base_urls_cache_source': salmonConfigUrl,
+      'salmon_base_urls_cache': jsonEncode(['https://current.example.com']),
+    });
     final dio = Dio()
       ..interceptors.add(
         InterceptorsWrapper(
@@ -638,52 +898,43 @@ void main() {
     );
   });
 
-  test(
-    'current API credential rejection wins over stale host timeout',
-    () async {
-      SharedPreferences.setMockInitialValues({
-        'salmon_base_url': 'https://stale.example.com',
-      });
-      final dio = Dio()
-        ..interceptors.add(
-          InterceptorsWrapper(
-            onRequest: (options, handler) {
-              handler.reject(
-                DioException(
-                  requestOptions: options,
-                  response: options.uri.host == 'ap.swywl.com'
-                      ? Response(requestOptions: options, statusCode: 401)
-                      : null,
-                  type: options.uri.host == 'ap.swywl.com'
-                      ? DioExceptionType.badResponse
-                      : DioExceptionType.connectionTimeout,
-                ),
-              );
-            },
-          ),
-        );
-
-      expect(
-        SalmonService(
-          dio: dio,
-        ).login(account: 'user@example.com', password: 'bad'),
-        throwsA(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            '账号或密码错误',
+  test('a blocked domain does not report an incorrect password', () async {
+    SharedPreferences.setMockInitialValues({
+      'salmon_base_urls_cache_source': salmonConfigUrl,
+      'salmon_base_urls_cache': jsonEncode(['https://blocked.example.com']),
+    });
+    final dio = Dio()
+      ..interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) => handler.reject(
+            DioException(
+              requestOptions: options,
+              response: Response(requestOptions: options, statusCode: 403),
+              type: DioExceptionType.badResponse,
+            ),
           ),
         ),
       );
-    },
-  );
-
+    await expectLater(
+      SalmonService(
+        dio: dio,
+      ).login(account: 'user@example.com', password: 'secret'),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          isNot('账号或密码错误'),
+        ),
+      ),
+    );
+  });
   test(
     'authenticated GET requests fail over to a healthy cached endpoint',
     () async {
       SharedPreferences.setMockInitialValues({
         'salmon_base_url': 'https://stale.example.com',
         'salmon_auth_data': 'session-token',
+        'salmon_base_urls_cache_source': salmonConfigUrl,
         'salmon_base_urls_cache': jsonEncode(['https://fresh.example.com']),
         'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
       });
@@ -764,6 +1015,7 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'salmon_base_url': 'https://saved.example.com',
       'salmon_auth_data': 'session-token',
+      'salmon_base_urls_cache_source': salmonConfigUrl,
       'salmon_base_urls_cache': jsonEncode(['https://saved.example.com']),
       'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
     });
@@ -1040,6 +1292,7 @@ void main() {
       'salmon_chatwoot_email': 'member@example.com',
       'salmon_chatwoot_contact': 'existing-contact',
       'salmon_chatwoot_conversation': 42,
+      'salmon_base_urls_cache_source': salmonConfigUrl,
       'salmon_base_urls_cache': jsonEncode(['https://main.example.com']),
       'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
     });
@@ -1063,6 +1316,7 @@ void main() {
       'salmon_chatwoot_email': 'member@example.com',
       'salmon_chatwoot_contact': 'existing-contact',
       'salmon_chatwoot_conversation': 42,
+      'salmon_base_urls_cache_source': salmonConfigUrl,
       'salmon_base_urls_cache': jsonEncode(['https://main.example.com']),
       'salmon_base_urls_cache_at': DateTime.now().millisecondsSinceEpoch,
     });

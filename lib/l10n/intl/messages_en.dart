@@ -905,9 +905,24 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleProviders": MessageLookupByLibrary.simpleMessage("Rule providers"),
     "ruleSet": MessageLookupByLibrary.simpleMessage("Rule set"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("Rule target"),
+    "salmonAnalyticsDescription": MessageLookupByLibrary.simpleMessage(
+      "Sends app page visits and platform to our Matomo service using a random installation ID. Does not send accounts, passwords, subscription links or browsing traffic. The server receives your IP address. Turn off to stop sending.",
+    ),
+    "salmonAnalyticsSaveFailed": MessageLookupByLibrary.simpleMessage(
+      "Unable to save the statistics setting. Try again.",
+    ),
+    "salmonAnalyticsTitle": MessageLookupByLibrary.simpleMessage(
+      "Usage statistics",
+    ),
     "salmonBuyNow": MessageLookupByLibrary.simpleMessage("Buy"),
     "salmonConnected": MessageLookupByLibrary.simpleMessage(
       "Securely connected",
+    ),
+    "salmonConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "Connection failed. Check your network and try again.",
+    ),
+    "salmonCoreRecoveryFailed": MessageLookupByLibrary.simpleMessage(
+      "The local proxy service could not reconnect. Reopen the app and try again.",
     ),
     "salmonDirectMode": MessageLookupByLibrary.simpleMessage("Direct"),
     "salmonDisconnected": MessageLookupByLibrary.simpleMessage("Not connected"),
@@ -930,6 +945,36 @@ class MessageLookup extends MessageLookupByLibrary {
       "No plans are available right now",
     ),
     "salmonNode": MessageLookupByLibrary.simpleMessage("Current node"),
+    "salmonNodeSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Signed in, but nodes could not be loaded. Tap Refresh on the nodes page.",
+    ),
+    "salmonNodesUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Nodes have not loaded. Try refreshing shortly.",
+    ),
+    "salmonOrderCreating": MessageLookupByLibrary.simpleMessage(
+      "Creating order…",
+    ),
+    "salmonOrderInvalid": MessageLookupByLibrary.simpleMessage(
+      "The server returned an invalid order. Check Order History before trying again.",
+    ),
+    "salmonPaidSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Payment succeeded. Nodes could not be refreshed. Refresh them on the nodes page.",
+    ),
+    "salmonPaymentOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "Unable to open the payment page. Please continue from Order History.",
+    ),
+    "salmonPaymentPreparing": MessageLookupByLibrary.simpleMessage(
+      "Opening payment…",
+    ),
+    "salmonPaymentSyncing": MessageLookupByLibrary.simpleMessage(
+      "Payment confirmed. Updating your plan and nodes…",
+    ),
+    "salmonPaymentWaiting": MessageLookupByLibrary.simpleMessage(
+      "Waiting for payment confirmation",
+    ),
+    "salmonPaymentWaitingHint": MessageLookupByLibrary.simpleMessage(
+      "Payment confirmation runs for up to 45 seconds. You may leave this page and check Order History later.",
+    ),
     "salmonPlan": MessageLookupByLibrary.simpleMessage("Network plan"),
     "salmonPlans": MessageLookupByLibrary.simpleMessage("Plans"),
     "salmonPlansSubtitle": MessageLookupByLibrary.simpleMessage(
@@ -938,11 +983,27 @@ class MessageLookup extends MessageLookupByLibrary {
     "salmonPlansTitle": MessageLookupByLibrary.simpleMessage(
       "Choose your plan",
     ),
+    "salmonRequestTimeout": MessageLookupByLibrary.simpleMessage(
+      "The server timed out. Try again later.",
+    ),
     "salmonRequiredField": MessageLookupByLibrary.simpleMessage(
       "This field is required",
     ),
+    "salmonRetry": MessageLookupByLibrary.simpleMessage("Retry"),
     "salmonRuleMode": MessageLookupByLibrary.simpleMessage("Rule"),
+    "salmonSecureConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "Unable to establish a secure connection. Check your network or try again later.",
+    ),
     "salmonSelectNode": MessageLookupByLibrary.simpleMessage("Select node"),
+    "salmonSessionExpired": MessageLookupByLibrary.simpleMessage(
+      "Your session expired. Sign in again.",
+    ),
+    "salmonSubscriptionChanged": MessageLookupByLibrary.simpleMessage(
+      "Subscription changed. Refresh nodes again.",
+    ),
+    "salmonSubscriptionMissing": MessageLookupByLibrary.simpleMessage(
+      "The server returned no subscription URL. Check your subscription.",
+    ),
     "salmonTapConnect": MessageLookupByLibrary.simpleMessage(
       "Tap to connect securely",
     ),

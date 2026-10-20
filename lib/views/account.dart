@@ -12,6 +12,7 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/views/config/general.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/widgets/salmon_load_error.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,22 +28,25 @@ import 'package:webview_flutter_windows/webview_flutter_windows.dart'
 enum AccountInitialAction { none, invites, customerService }
 
 class InvitationPage extends StatefulWidget {
-  const InvitationPage({super.key});
+  final SalmonService? service;
+
+  const InvitationPage({super.key, this.service});
 
   @override
   State<InvitationPage> createState() => _InvitationPageState();
 }
 
 class _InvitationPageState extends State<InvitationPage> {
+  SalmonService get _service => widget.service ?? salmonService;
   late Future<Map<String, dynamic>> _future = _load();
   bool _generating = false;
 
   Future<Map<String, dynamic>> _load({bool forceRefresh = false}) async {
     final values = await Future.wait([
-      salmonService.fetchInvites(forceRefresh: forceRefresh),
-      salmonService.fetchUserInfo(forceRefresh: forceRefresh),
-      salmonService.fetchCommissionConfig(forceRefresh: forceRefresh),
-      salmonService.fetchInvitationUrl(forceRefresh: forceRefresh),
+      _service.fetchInvites(forceRefresh: forceRefresh),
+      _service.fetchUserInfo(forceRefresh: forceRefresh),
+      _service.fetchCommissionConfig(forceRefresh: forceRefresh),
+      _service.fetchInvitationUrl(forceRefresh: forceRefresh),
     ]);
     return {
       'invite': values[0],
@@ -68,8 +72,9 @@ class _InvitationPageState extends State<InvitationPage> {
     if (_generating) return;
     setState(() => _generating = true);
     try {
-      await salmonService.generateInvite();
-      setState(() => _future = _load(forceRefresh: true));
+      await _service.generateInvite();
+      if (!mounted) return;
+      _reload();
       await _future;
     } catch (error) {
       if (mounted) {
@@ -86,14 +91,17 @@ class _InvitationPageState extends State<InvitationPage> {
     }
   }
 
+  void _reload() {
+    setState(() {
+      _future = _load(forceRefresh: true);
+    });
+  }
+
   @override
   Widget build(BuildContext context) => CommonScaffold(
     title: '返利',
     actions: [
-      IconButton(
-        onPressed: () => setState(() => _future = _load(forceRefresh: true)),
-        icon: const Icon(Icons.refresh_rounded),
-      ),
+      IconButton(onPressed: _reload, icon: const Icon(Icons.refresh_rounded)),
     ],
     body: FutureBuilder<Map<String, dynamic>>(
       future: _future,
@@ -104,8 +112,7 @@ class _InvitationPageState extends State<InvitationPage> {
         if (snapshot.hasError) {
           return Center(
             child: FilledButton.icon(
-              onPressed: () =>
-                  setState(() => _future = _load(forceRefresh: true)),
+              onPressed: _reload,
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('重新获取'),
             ),
@@ -363,10 +370,12 @@ class _RebateMetric extends StatelessWidget {
 
 class AccountView extends StatefulWidget {
   final AccountInitialAction initialAction;
+  final SalmonService? service;
 
   const AccountView({
     super.key,
     this.initialAction = AccountInitialAction.none,
+    this.service,
   });
 
   @override
@@ -374,6 +383,7 @@ class AccountView extends StatefulWidget {
 }
 
 class _AccountViewState extends State<AccountView> {
+  SalmonService get _service => widget.service ?? salmonService;
   late Future<Map<String, dynamic>> _data = salmonAccountCache == null
       ? _load()
       : Future.value(salmonAccountCache!);
@@ -381,7 +391,7 @@ class _AccountViewState extends State<AccountView> {
   @override
   void initState() {
     super.initState();
-    salmonService.membershipRevision.addListener(_onMembershipChanged);
+    _service.membershipRevision.addListener(_onMembershipChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       switch (widget.initialAction) {
@@ -406,16 +416,20 @@ class _AccountViewState extends State<AccountView> {
 
   @override
   void dispose() {
-    salmonService.membershipRevision.removeListener(_onMembershipChanged);
+    _service.membershipRevision.removeListener(_onMembershipChanged);
     super.dispose();
   }
 
   Future<Map<String, dynamic>> _load({bool forceRefresh = false}) async {
+    final generation = _service.sessionGeneration;
     final values = await Future.wait([
-      salmonService.fetchUserInfo(forceRefresh: forceRefresh),
-      salmonService.fetchSubscribeInfo(forceRefresh: forceRefresh),
-      salmonService.fetchPlans(forceRefresh: forceRefresh),
+      _service.fetchUserInfo(forceRefresh: forceRefresh),
+      _service.fetchSubscribeInfo(forceRefresh: forceRefresh),
+      _service.fetchPlans(forceRefresh: forceRefresh),
     ]);
+    if (generation != _service.sessionGeneration) {
+      throw SalmonSessionExpiredException();
+    }
     final user = Map<String, dynamic>.from(values[0] as Map);
     final subscription = Map<String, dynamic>.from(values[1] as Map);
     final plans = values[2] as List<Map<String, dynamic>>;
@@ -447,13 +461,20 @@ class _AccountViewState extends State<AccountView> {
         }
       }
     }
-    salmonAccountCache = result;
-    salmonAccountCacheAt = DateTime.now();
+    if (mounted) {
+      salmonAccountCache = result;
+      salmonAccountCacheAt = DateTime.now();
+    }
     return result;
   }
 
-  void _reload({bool forceRefresh = true}) =>
-      setState(() => _data = _load(forceRefresh: forceRefresh));
+  void _reload({bool forceRefresh = true}) {
+    if (!mounted) return;
+    setState(() {
+      _data = _load(forceRefresh: forceRefresh);
+    });
+  }
+
   String _money(dynamic cents) =>
       '¥${((num.tryParse('${cents ?? 0}') ?? 0) / 100).toStringAsFixed(2)}';
   String _gb(num value) =>
@@ -766,6 +787,9 @@ class _AccountViewState extends State<AccountView> {
       body: FutureBuilder<Map<String, dynamic>>(
         future: _data,
         builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return SalmonLoadError(error: snapshot.error!, onRetry: _reload);
+          }
           if (!snapshot.hasData)
             return const Center(child: CircularProgressIndicator());
           final data = snapshot.data!;
@@ -998,17 +1022,43 @@ class _SalmonSettingsPageState extends State<SalmonSettingsPage> {
 }
 
 class OrdersPage extends StatefulWidget {
-  const OrdersPage({super.key});
+  final SalmonService? service;
+
+  const OrdersPage({super.key, this.service});
   @override
   State<OrdersPage> createState() => _OrdersPageState();
 }
 
 class _OrdersPageState extends State<OrdersPage> {
-  late Future<List<Map<String, dynamic>>> data = salmonService.fetchOrders();
+  SalmonService get _service => widget.service ?? salmonService;
+  late Future<List<Map<String, dynamic>>> data = _service.fetchOrders();
+  bool _busy = false;
+
+  Future<void> _cancelOrder(String tradeNo) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await _service.cancelOrder(tradeNo);
+      if (!mounted) return;
+      setState(() {
+        data = _service.fetchOrders(forceRefresh: true);
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(salmonFriendlyError(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   Future<void> _continuePay(Map<String, dynamic> order) async {
+    if (_busy) return;
+    setState(() => _busy = true);
     try {
-      final payments = await salmonService.fetchPaymentMethods();
+      final payments = await _service.fetchPaymentMethods();
       if (!mounted) return;
       if (payments.isEmpty) throw StateError('暂无可用支付方式');
       final method = await showModalBottomSheet<int>(
@@ -1048,22 +1098,27 @@ class _OrdersPageState extends State<OrdersPage> {
           ),
         ),
       );
-      if (method == null) return;
-      final checkout = await salmonService.checkoutOrder(
+      if (!mounted || method == null) return;
+      final checkout = await _service.checkoutOrder(
         tradeNo: '${order['trade_no']}',
         method: method,
       );
       final type = int.tryParse('${checkout['type'] ?? 1}') ?? 1;
       final value = '${checkout['data'] ?? ''}';
       if (!mounted || value.isEmpty) return;
-      if (type == 1) {
+      if (type == -1) {
+        // Balance payments complete without an external payment page.
+      } else if (type == 1) {
         final uri = Uri.parse(value);
-        await launchUrl(
+        final launched = await launchUrl(
           uri,
           mode: uri.scheme == 'http' || uri.scheme == 'https'
               ? LaunchMode.inAppBrowserView
               : LaunchMode.externalApplication,
         );
+        if (!launched) {
+          throw StateError(currentAppLocalizations.salmonPaymentOpenFailed);
+        }
       } else {
         await showDialog<void>(
           context: context,
@@ -1088,19 +1143,45 @@ class _OrdersPageState extends State<OrdersPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('正在确认支付结果…')));
-      final completed = await salmonService.waitForOrderCompleted(
+      final completed = await _service.waitForOrderCompleted(
         '${order['trade_no']}',
+        timeout: const Duration(seconds: 45),
+        shouldContinue: () => mounted,
       );
       if (!mounted) return;
-      setState(() => data = salmonService.fetchOrders(forceRefresh: true));
+      var synced = false;
+      if (completed) {
+        try {
+          await _service.refreshMembershipData().timeout(
+            const Duration(seconds: 15),
+          );
+          synced = true;
+        } catch (_) {
+          // A confirmed order stays paid if the account refresh fails.
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        data = _service.fetchOrders(forceRefresh: true);
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(completed ? '支付成功，套餐已更新' : '暂未确认到账，请稍后刷新订单')),
+        SnackBar(
+          content: Text(
+            completed
+                ? synced
+                      ? '支付成功，套餐已更新'
+                      : context.appLocalizations.salmonPaidSyncFailed
+                : '暂未确认到账，请稍后刷新订单',
+          ),
+        ),
       );
     } catch (error) {
       if (mounted)
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(salmonFriendlyError(error))));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -1110,6 +1191,14 @@ class _OrdersPageState extends State<OrdersPage> {
     body: FutureBuilder<List<Map<String, dynamic>>>(
       future: data,
       builder: (_, snap) {
+        if (snap.hasError) {
+          return SalmonLoadError(
+            error: snap.error!,
+            onRetry: () => setState(() {
+              data = _service.fetchOrders(forceRefresh: true);
+            }),
+          );
+        }
         if (!snap.hasData)
           return const Center(child: CircularProgressIndicator());
         final list = snap.data!;
@@ -1152,21 +1241,18 @@ class _OrdersPageState extends State<OrdersPage> {
                         children: [
                           Expanded(
                             child: OutlinedButton(
-                              onPressed: () async {
-                                await salmonService.cancelOrder(
-                                  '${item['trade_no']}',
-                                );
-                                setState(
-                                  () => data = salmonService.fetchOrders(),
-                                );
-                              },
+                              onPressed: _busy
+                                  ? null
+                                  : () => _cancelOrder('${item['trade_no']}'),
                               child: const Text('取消订单'),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: FilledButton(
-                              onPressed: () => _continuePay(item),
+                              onPressed: _busy
+                                  ? null
+                                  : () => _continuePay(item),
                               child: const Text('继续支付'),
                             ),
                           ),
@@ -1449,11 +1535,23 @@ class _TicketsPageState extends State<TicketsPage> {
     if (ok == true &&
         subject.text.trim().isNotEmpty &&
         message.text.trim().isNotEmpty) {
-      await salmonService.createTicket(
-        subject: subject.text.trim(),
-        message: message.text.trim(),
-      );
-      setState(() => data = salmonService.fetchTickets());
+      try {
+        await salmonService.createTicket(
+          subject: subject.text.trim(),
+          message: message.text.trim(),
+        );
+        if (mounted) {
+          setState(() {
+            data = salmonService.fetchTickets(forceRefresh: true);
+          });
+        }
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(salmonFriendlyError(error))));
+        }
+      }
     }
     subject.dispose();
     message.dispose();
@@ -1473,6 +1571,14 @@ class _TicketsPageState extends State<TicketsPage> {
     body: FutureBuilder<List<Map<String, dynamic>>>(
       future: data,
       builder: (_, snap) {
+        if (snap.hasError) {
+          return SalmonLoadError(
+            error: snap.error!,
+            onRetry: () => setState(() {
+              data = salmonService.fetchTickets(forceRefresh: true);
+            }),
+          );
+        }
         if (!snap.hasData)
           return const Center(child: CircularProgressIndicator());
         final list = snap.data!;
@@ -1551,7 +1657,9 @@ class _TicketDetailPageState extends State<TicketDetailPage> {
       try {
         await salmonService.replyTicket(widget.id, text);
         if (!mounted) return;
-        setState(() => data = salmonService.fetchTicketDetail(widget.id));
+        setState(() {
+          data = salmonService.fetchTicketDetail(widget.id);
+        });
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('回复已发送')));
@@ -1572,8 +1680,19 @@ class _TicketDetailPageState extends State<TicketDetailPage> {
         PopupMenuButton<String>(
           onSelected: (v) async {
             if (v == 'close') {
-              await salmonService.closeTicket(widget.id);
-              setState(() => data = salmonService.fetchTicketDetail(widget.id));
+              try {
+                await salmonService.closeTicket(widget.id);
+                if (!mounted) return;
+                setState(() {
+                  data = salmonService.fetchTicketDetail(widget.id);
+                });
+              } catch (error) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(salmonFriendlyError(error))),
+                  );
+                }
+              }
             }
           },
           itemBuilder: (_) => const [
@@ -1590,6 +1709,14 @@ class _TicketDetailPageState extends State<TicketDetailPage> {
     body: FutureBuilder<Map<String, dynamic>>(
       future: data,
       builder: (_, snap) {
+        if (snap.hasError) {
+          return SalmonLoadError(
+            error: snap.error!,
+            onRetry: () => setState(() {
+              data = salmonService.fetchTicketDetail(widget.id);
+            }),
+          );
+        }
         if (!snap.hasData)
           return const Center(child: CircularProgressIndicator());
         final d = snap.data!;

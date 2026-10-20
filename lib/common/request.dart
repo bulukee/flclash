@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HttpStatus;
+import 'dart:io' show HttpStatus, SocketException, TlsException;
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/services/salmon_dns.dart';
 import 'package:flutter/cupertino.dart';
@@ -15,33 +16,101 @@ import 'package:flutter/foundation.dart';
 class Request {
   late final Dio dio;
   late final Dio _clashDio;
+  late final Dio _directSubscriptionDio;
+  final bool Function() _isProxyActive;
   String? userAgent;
 
-  Request() {
+  Request({
+    Dio? subscriptionDio,
+    Dio? directSubscriptionDio,
+    bool Function()? isProxyActive,
+  }) : _isProxyActive = isProxyActive ?? _proxyActive {
     dio = Dio(BaseOptions(headers: {'User-Agent': browserUa}));
     installSalmonDnsFallback(dio);
-    _clashDio = Dio();
+    _clashDio =
+        subscriptionDio ??
+        Dio(
+          BaseOptions(
+            connectTimeout: const Duration(seconds: 12),
+            receiveTimeout: const Duration(seconds: 30),
+          ),
+        );
     final resolver = SalmonDnsResolver();
-    _clashDio.httpClientAdapter = IOHttpClientAdapter(
-      createHttpClient: () {
-        final client = createSalmonHttpClient(resolver);
-        client.findProxy = (Uri uri) {
+    if (subscriptionDio == null) {
+      _clashDio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final client = createSalmonHttpClient(resolver);
+          client.findProxy = (Uri uri) {
+            client.userAgent = globalState.ua;
+            return FlClashHttpOverrides.handleFindProxy(uri);
+          };
+          return client;
+        },
+      );
+    }
+    _directSubscriptionDio =
+        directSubscriptionDio ??
+        Dio(
+          BaseOptions(
+            connectTimeout: const Duration(seconds: 12),
+            receiveTimeout: const Duration(seconds: 30),
+          ),
+        );
+    if (directSubscriptionDio == null) {
+      _directSubscriptionDio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () {
+          final client = createSalmonHttpClient(resolver);
+          client.findProxy = (_) => 'DIRECT';
           client.userAgent = globalState.ua;
-          return FlClashHttpOverrides.handleFindProxy(uri);
-        };
-        return client;
-      },
-    );
+          return client;
+        },
+      );
+    }
+  }
+
+  static bool _proxyActive() {
+    final ref = globalState.container;
+    return ref.read(isStartProvider) && !ref.read(suspendProvider);
+  }
+
+  bool _canRetryDirect(DioException error) {
+    return switch (error.type) {
+      DioExceptionType.connectionTimeout ||
+      DioExceptionType.sendTimeout ||
+      DioExceptionType.receiveTimeout ||
+      DioExceptionType.connectionError => true,
+      DioExceptionType.unknown =>
+        error.error is SocketException || error.error is TlsException,
+      DioExceptionType.badResponse => [
+        502,
+        503,
+        504,
+      ].contains(error.response?.statusCode),
+      _ => false,
+    };
   }
 
   Future<Response<Uint8List>> getFileResponseForUrl(String url) async {
     try {
-      return await _clashDio.get<Uint8List>(
-        url,
-        options: Options(responseType: ResponseType.bytes),
-      );
+      final usesProxy = _isProxyActive();
+      try {
+        return await _clashDio.get<Uint8List>(
+          url,
+          options: Options(responseType: ResponseType.bytes),
+        );
+      } on DioException catch (error) {
+        if (!usesProxy || !_canRetryDirect(error)) rethrow;
+        commonPrint.log('Subscription proxy request failed; retrying directly');
+        return await _directSubscriptionDio.get<Uint8List>(
+          url,
+          options: Options(responseType: ResponseType.bytes),
+        );
+      }
     } catch (e) {
-      commonPrint.log('getFileResponseForUrl error ${e.toString()}');
+      commonPrint.log(
+        'Subscription download failed: ${e is DioException ? e.type.name : e.runtimeType}',
+        logLevel: LogLevel.warning,
+      );
       if (e is DioException) {
         if (e.type == DioExceptionType.unknown) {
           throw currentAppLocalizations.unknownNetworkError;

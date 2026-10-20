@@ -29,6 +29,7 @@ abstract class SubscriptionInfo with _$SubscriptionInfo {
     final Map<String, int?> map = {};
     for (final i in list) {
       final keyValue = i.trim().split('=');
+      if (keyValue.length != 2) continue;
       map[keyValue[0]] = int.tryParse(keyValue[1]);
     }
     return SubscriptionInfo(
@@ -150,6 +151,14 @@ extension ProfilesExt on List<Profile> {
 }
 
 extension ProfileExtension on Profile {
+  Profile get withDatabasePrecision => copyWith(
+    lastUpdateDate: lastUpdateDate == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(
+            (lastUpdateDate!.millisecondsSinceEpoch ~/ 1000) * 1000,
+          ),
+  );
+
   ProfileType get type =>
       url.isEmpty == true ? ProfileType.file : ProfileType.url;
 
@@ -197,8 +206,11 @@ extension ProfileExtension on Profile {
     return _getFile();
   }
 
-  Future<Profile> update() async {
+  Future<Profile> update({bool Function()? shouldContinue}) async {
     final response = await request.getFileResponseForUrl(url);
+    if (shouldContinue?.call() == false) {
+      throw StateError(currentAppLocalizations.salmonSubscriptionChanged);
+    }
     final disposition = response.headers.value('content-disposition');
     final userinfo = response.headers.value('subscription-userinfo');
     return copyWith(
@@ -207,21 +219,36 @@ extension ProfileExtension on Profile {
         id.toString(),
       ]),
       subscriptionInfo: SubscriptionInfo.formHString(userinfo),
-    ).saveFile(response.data ?? Uint8List.fromList([]));
+    ).saveFile(
+      response.data ?? Uint8List.fromList([]),
+      shouldContinue: shouldContinue,
+    );
   }
 
-  Future<Profile> saveFile(Uint8List bytes) async {
-    final path = await appPath.tempFilePath;
+  Future<Profile> saveFile(
+    Uint8List bytes, {
+    bool Function()? shouldContinue,
+  }) async {
+    final parent = File(await appPath.tempFilePath).parent;
+    await parent.create(recursive: true);
+    final directory = await parent.createTemp('profile-');
+    final path = '${directory.path}/config.yaml';
     final tempFile = File(path);
-    await tempFile.safeWriteAsBytes(bytes);
-    final message = await coreController.validateConfig(path);
-    if (message.isNotEmpty) {
-      throw message;
+    try {
+      await tempFile.safeWriteAsBytes(bytes);
+      final message = await coreController.validateConfig(path);
+      if (message.isNotEmpty) {
+        throw message;
+      }
+      if (shouldContinue?.call() == false) {
+        throw StateError(currentAppLocalizations.salmonSubscriptionChanged);
+      }
+      final mFile = await file;
+      await tempFile.copy(mFile.path);
+      return copyWith(lastUpdateDate: DateTime.now()).withDatabasePrecision;
+    } finally {
+      await directory.delete(recursive: true);
     }
-    final mFile = await file;
-    await tempFile.copy(mFile.path);
-    await tempFile.safeDelete();
-    return copyWith(lastUpdateDate: DateTime.now());
   }
 
   Future<Profile> saveFileWithPath(String path) async {
@@ -231,6 +258,6 @@ extension ProfileExtension on Profile {
     }
     final mFile = await file;
     await File(path).copy(mFile.path);
-    return copyWith(lastUpdateDate: DateTime.now());
+    return copyWith(lastUpdateDate: DateTime.now()).withDatabasePrecision;
   }
 }

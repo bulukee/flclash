@@ -101,17 +101,22 @@ class _CoreContainerState extends ConsumerState<CoreManager>
 
   @override
   Future<void> onCrash(String message) async {
-    if (ref.read(coreStatusProvider) != CoreStatus.connected) {
+    if (!system.isAndroid &&
+        ref.read(coreStatusProvider) != CoreStatus.connected) {
       return;
     }
     ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
-    if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+    if (!system.isAndroid &&
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
       context.showNotifier(message);
     }
     if (system.isAndroid) {
       coreController.resetConnectionState();
     } else {
       await coreController.shutdown(false);
+      if (mounted) {
+        await ref.read(coreActionProvider.notifier).recoverCore();
+      }
     }
     super.onCrash(message);
   }

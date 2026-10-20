@@ -87,8 +87,8 @@ class IPCCoreTransport {
     }
   }
 
-  void send(String message) {
-    sendIpcMessage(data: utf8.encode(message));
+  Future<void> send(String message) {
+    return sendIpcMessage(data: utf8.encode(message));
   }
 
   void disconnected() {

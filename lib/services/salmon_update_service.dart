@@ -6,7 +6,6 @@ import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/services/salmon_service.dart';
 import 'package:fl_clash/services/salmon_dns.dart';
 import 'package:flutter/material.dart';

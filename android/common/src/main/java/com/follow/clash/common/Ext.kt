@@ -173,6 +173,14 @@ inline fun <reified T : IBinder> Context.bindServiceFlow(
         override fun onServiceDisconnected(name: ComponentName?) {
             trySend(Pair(null, "Service disconnected"))
         }
+
+        override fun onBindingDied(name: ComponentName?) {
+            trySend(Pair(null, "Service binding died"))
+        }
+
+        override fun onNullBinding(name: ComponentName?) {
+            trySend(Pair(null, "Service returned an empty binding"))
+        }
     }
 
     val success = withContext(Dispatchers.Main) {
@@ -185,8 +193,7 @@ inline fun <reified T : IBinder> Context.bindServiceFlow(
 
     awaitClose {
         Handler(Looper.getMainLooper()).post {
-            unbindService(connection)
-            trySend(Pair(null, ""))
+            runCatching { unbindService(connection) }
         }
     }
 }.retryWhen { cause, attempt ->

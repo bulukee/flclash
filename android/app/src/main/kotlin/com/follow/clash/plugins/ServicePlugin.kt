@@ -10,13 +10,16 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default) {
@@ -38,6 +41,8 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     }
 
     override fun onDetachedFromEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        intentionallyShutdown = true
+        Service.onServiceDisconnected = null
         recoveryJob?.cancel()
         flutterMethodChannel.setMethodCallHandler(null)
     }
@@ -78,9 +83,20 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
 
     private fun handleInvokeAction(call: MethodCall, result: MethodChannel.Result) {
         launch {
-            val data = call.arguments<String>()!!
+            val data = call.arguments<String>()
+            if (data == null) {
+                result.error("INVALID_ACTION", "Core action is missing", null)
+                return@launch
+            }
+            val completed = AtomicBoolean(false)
             Service.invokeAction(data) {
-                result.success(it)
+                if (completed.compareAndSet(false, true)) {
+                    result.success(it)
+                }
+            }.onFailure {
+                if (completed.compareAndSet(false, true)) {
+                    result.error("CORE_UNAVAILABLE", "Core service request failed", null)
+                }
             }
         }
     }
@@ -118,20 +134,23 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
     }
 
     private fun onServiceDisconnected(message: String) {
-        recoverRunningService = State.handleServiceDisconnected()
+        if (intentionallyShutdown) return
+        recoverRunningService = State.handleServiceDisconnected() || recoverRunningService
         flutterMethodChannel.invokeMethodOnMainThread<Any>("crash", message)
         if (!intentionallyShutdown) {
             scheduleRecovery()
         }
     }
 
+    @Synchronized
     private fun scheduleRecovery() {
-        recoveryJob?.cancel()
-        recoveryJob = launch {
+        if (recoveryJob?.isActive == true) return
+        recoveryJob = launch(start = CoroutineStart.LAZY) {
             repeat(6) { attempt ->
                 delay(if (attempt == 0) 300L else minOf(8_000L, 500L * (1L shl attempt)))
                 Service.bind()
                 val listenerResult = Service.setEventListener { handleSendEvent(it) }
+                coroutineContext.ensureActive()
                 if (listenerResult.isSuccess) {
                     if (recoverRunningService) {
                         if (!State.shouldBeRunning) {
@@ -155,7 +174,9 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler,
                     return@launch
                 }
             }
+            flutterMethodChannel.invokeMethodOnMainThread<Any>("recoveryFailed", null)
         }
+        recoveryJob?.start()
     }
 
     private fun handleSyncState(call: MethodCall, result: MethodChannel.Result) {

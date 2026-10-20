@@ -733,8 +733,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleProviders": MessageLookupByLibrary.simpleMessage("ルールプロバイダー"),
     "ruleSet": MessageLookupByLibrary.simpleMessage("ルールセット"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("ルール対象"),
+    "salmonAnalyticsDescription": MessageLookupByLibrary.simpleMessage(
+      "ランダムなインストールIDを使い、アプリのページ閲覧とプラットフォームを自社Matomoへ送信します。アカウント、パスワード、購読リンク、通信内容は送りません。サーバーには接続元IPが伝わります。いつでも無効にできます。",
+    ),
+    "salmonAnalyticsSaveFailed": MessageLookupByLibrary.simpleMessage(
+      "統計設定を保存できません。もう一度お試しください。",
+    ),
+    "salmonAnalyticsTitle": MessageLookupByLibrary.simpleMessage("利用統計"),
     "salmonBuyNow": MessageLookupByLibrary.simpleMessage("購入"),
     "salmonConnected": MessageLookupByLibrary.simpleMessage("接続済み"),
+    "salmonConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "接続できません。ネットワークを確認して再試行してください。",
+    ),
+    "salmonCoreRecoveryFailed": MessageLookupByLibrary.simpleMessage(
+      "ローカルプロキシサービスに再接続できません。アプリを開き直してください。",
+    ),
     "salmonDirectMode": MessageLookupByLibrary.simpleMessage("直接"),
     "salmonDisconnected": MessageLookupByLibrary.simpleMessage("未接続"),
     "salmonFrom": MessageLookupByLibrary.simpleMessage("最低"),
@@ -754,15 +767,59 @@ class MessageLookup extends MessageLookupByLibrary {
     "salmonMode": MessageLookupByLibrary.simpleMessage("プロキシモード"),
     "salmonNoPlans": MessageLookupByLibrary.simpleMessage("購入可能なプランはありません"),
     "salmonNode": MessageLookupByLibrary.simpleMessage("現在のノード"),
+    "salmonNodeSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "ログインしましたが、ノードを読み込めませんでした。ノード画面で更新してください。",
+    ),
+    "salmonNodesUnavailable": MessageLookupByLibrary.simpleMessage(
+      "ノードが読み込まれていません。後でもう一度更新してください。",
+    ),
+    "salmonOrderCreating": MessageLookupByLibrary.simpleMessage("注文を作成しています…"),
+    "salmonOrderInvalid": MessageLookupByLibrary.simpleMessage(
+      "注文情報が無効です。再試行前に注文履歴を確認してください。",
+    ),
+    "salmonPaidSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "支払いは完了しましたが、ノードを更新できませんでした。ノード画面で更新してください。",
+    ),
+    "salmonPaymentOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "支払いページを開けません。注文履歴から支払いを続けてください。",
+    ),
+    "salmonPaymentPreparing": MessageLookupByLibrary.simpleMessage(
+      "支払い画面を開いています…",
+    ),
+    "salmonPaymentSyncing": MessageLookupByLibrary.simpleMessage(
+      "支払い確認済み。プランとノードを更新しています…",
+    ),
+    "salmonPaymentWaiting": MessageLookupByLibrary.simpleMessage(
+      "支払い確認を待っています",
+    ),
+    "salmonPaymentWaitingHint": MessageLookupByLibrary.simpleMessage(
+      "自動確認は最大45秒です。この画面を離れて、後で注文履歴を確認できます。",
+    ),
     "salmonPlan": MessageLookupByLibrary.simpleMessage("ネットワークプラン"),
     "salmonPlans": MessageLookupByLibrary.simpleMessage("プラン購入"),
     "salmonPlansSubtitle": MessageLookupByLibrary.simpleMessage(
       "高速で安定したネットワーク",
     ),
     "salmonPlansTitle": MessageLookupByLibrary.simpleMessage("プランを選択"),
+    "salmonRequestTimeout": MessageLookupByLibrary.simpleMessage(
+      "サーバーがタイムアウトしました。後でもう一度お試しください。",
+    ),
     "salmonRequiredField": MessageLookupByLibrary.simpleMessage("この項目は必須です"),
+    "salmonRetry": MessageLookupByLibrary.simpleMessage("再試行"),
     "salmonRuleMode": MessageLookupByLibrary.simpleMessage("ルール"),
+    "salmonSecureConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "安全な接続を確立できません。ネットワークを確認するか、後でもう一度お試しください。",
+    ),
     "salmonSelectNode": MessageLookupByLibrary.simpleMessage("ノードを選択"),
+    "salmonSessionExpired": MessageLookupByLibrary.simpleMessage(
+      "セッションが切れました。再ログインしてください。",
+    ),
+    "salmonSubscriptionChanged": MessageLookupByLibrary.simpleMessage(
+      "サブスクリプションが変更されました。ノードを再更新してください。",
+    ),
+    "salmonSubscriptionMissing": MessageLookupByLibrary.simpleMessage(
+      "購読URLが返されませんでした。契約状態を確認してください。",
+    ),
     "salmonTapConnect": MessageLookupByLibrary.simpleMessage("タップして接続"),
     "salmonTapDisconnect": MessageLookupByLibrary.simpleMessage("タップして切断"),
     "salmonTapToTest": MessageLookupByLibrary.simpleMessage("タップしてテスト"),

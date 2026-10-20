@@ -29,8 +29,10 @@ class RemoteService : Service(),
             runLock.withLock {
                 delegate?.useService { service ->
                     service.stop()
-                    delegate?.unbind()
                 }
+                delegate?.unbind()
+                delegate = null
+                intent = null
                 State.runTime = 0
                 result.onResult(0)
             }
@@ -50,7 +52,7 @@ class RemoteService : Service(),
                     true -> VpnService::class.intent
                     false -> CommonService::class.intent
                 }
-                if (intent != nextIntent) {
+                if (intent != nextIntent || delegate == null) {
                     delegate?.unbind()
                     delegate = ServiceDelegate(nextIntent, ::handleServiceDisconnected) { binder ->
                         when (binder) {
@@ -62,8 +64,14 @@ class RemoteService : Service(),
                     intent = nextIntent
                     delegate?.bind()
                 }
-                delegate?.useService { service ->
+                delegate?.bind()
+                val started = delegate?.useService { service ->
                     service.start()
+                }
+                if (started?.isSuccess != true) {
+                    State.runTime = 0
+                    result.onResult(0)
+                    return@withLock
                 }
                 State.runTime = when (runTime != 0L) {
                     true -> runTime

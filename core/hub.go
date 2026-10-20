@@ -89,6 +89,12 @@ func handleShutdown() bool {
 
 func handleValidateConfig(path string) string {
 	buf, err := readFile(path)
+	if err != nil {
+		return err.Error()
+	}
+	if len(buf) == 0 {
+		return "subscription configuration is empty"
+	}
 	_, err = config.UnmarshalRawConfig(buf)
 	if err != nil {
 		return err.Error()
@@ -569,7 +575,6 @@ func handleSetupConfig(bytes []byte) string {
 	err := UnmarshalJson(bytes, params)
 	if err != nil {
 		logError("unmarshalRawConfig error %v", err)
-		_ = applyConfig(defaultSetupParams())
 		return err.Error()
 	}
 	err = applyConfig(params)

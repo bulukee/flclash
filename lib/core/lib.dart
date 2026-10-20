@@ -21,7 +21,7 @@ class CoreLib extends CoreHandlerInterface {
   @override
   Future<String> preload() {
     if (_connectedCompleter.isCompleted) {
-      return Future.value('core is connected');
+      return Future.value('');
     }
     final inFlight = _preloadFuture;
     if (inFlight != null) {
@@ -46,19 +46,22 @@ class CoreLib extends CoreHandlerInterface {
   }
 
   Future<String> _preload(int generation) async {
-    final res = await service?.init();
+    final res = await service?.init().timeout(const Duration(seconds: 15));
     if (generation != _connectionGeneration) {
       return 'service connection reset';
     }
     if (res?.isEmpty != true) {
       return res ?? '';
     }
-    if (!_connectedCompleter.isCompleted) {
+    final syncRes = await service
+        ?.syncState(globalState.container.read(sharedStateProvider))
+        .timeout(const Duration(seconds: 15));
+    if (generation != _connectionGeneration) {
+      return 'service connection reset';
+    }
+    if (syncRes?.isEmpty == true && !_connectedCompleter.isCompleted) {
       _connectedCompleter.complete(true);
     }
-    final syncRes = await service?.syncState(
-      globalState.container.read(sharedStateProvider),
-    );
     return syncRes ?? '';
   }
 
@@ -109,7 +112,7 @@ class CoreLib extends CoreHandlerInterface {
     final id = '${method.name}#${utils.id}';
     final result = await service
         ?.invokeAction(Action(id: id, method: method, data: data))
-        .withTimeout(onTimeout: () => null);
+        .withTimeout(timeout: timeout, onTimeout: () => null);
     if (result == null) {
       return null;
     }

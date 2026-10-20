@@ -5,6 +5,15 @@ import 'package:test/test.dart';
 
 void main() {
   group('SubscriptionInfo', () {
+    test('ignores malformed header fields without rejecting node data', () {
+      final info = SubscriptionInfo.formHString(
+        'upload=10; malformed; ; download=20; total=100;',
+      );
+      expect(info.upload, 10);
+      expect(info.download, 20);
+      expect(info.total, 100);
+    });
+
     test('parses subscription-userinfo header values', () {
       final info = SubscriptionInfo.formHString(
         'upload=10; download=20; total=100; expire=200',

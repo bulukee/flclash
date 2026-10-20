@@ -1,0 +1,51 @@
+{
+  "urls": [
+    "https://swy.yuxwu.com",
+    "https://aallpp.sanweny.com",
+    "https://aakkpp.sanweny.com",
+    "https://mt1.swyyy.com"
+  ],
+  "customerService": {
+    "url": "https://chat.sanweny.com/widget?website_token=8SpSTtNMSfp64U8wevUS7wZ7#/"
+  },
+  "invitation": {
+    "url": "https://swy1.sanweny.com/register?code=NoEYnmwU"
+  },
+  "analytics": {
+    "enabled": true,
+    "provider": "matomo",
+    "url": "https://tj.swywl.com/matomo.php",
+    "siteId": 2
+  },
+  "updates": {
+    "android": {
+      "versionCode": 2026101502,
+      "versionName": "1.2.25",
+      "force": false,
+      "arm64Url": "https://client.sanweny.com/swywl/Salmon-Android-arm64-v8a-1.2.25.apk",
+      "x64Url": "",
+      "sha256": "A4C7DD14E7D57331C32BFEE38030C9CFCBAFC9F4E970216702815C71F9BEF0AE"
+    },
+    "windows": {
+      "versionCode": 2026101502,
+      "versionName": "1.2.25",
+      "force": false,
+      "url": "https://client.sanweny.com/swywl/Salmon-Windows-x64-1.2.25-Setup.exe",
+      "sha256": "C0393DA1BB2E6293E627461C019236D27EA5DA8AFF7129B66773D2C5D0D95655"
+    },
+    "macos": {
+      "versionCode": 2026101502,
+      "versionName": "1.2.25",
+      "force": false,
+      "arm64Url": "https://client.sanweny.com/swywl/Salmon-macOS-arm64-1.2.25.dmg",
+      "arm64Sha256": "",
+      "x64Url": "https://client.sanweny.com/swywl/Salmon-macOS-x64-1.2.25.dmg",
+      "x64Sha256": ""
+    }
+  },
+  "releaseNotes": [
+    "优化登录稳定性",
+    "优化线路测速",
+    "升级首页连接动画"
+  ]
+}

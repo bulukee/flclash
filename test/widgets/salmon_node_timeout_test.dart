@@ -1,9 +1,11 @@
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/views/proxies/proxies.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 void main() {
   for (final delay in [-1, 0, 120]) {
@@ -17,6 +19,12 @@ void main() {
             ).overrideWith((ref) => delay),
           ],
           child: MaterialApp(
+            locale: const Locale('zh', 'CN'),
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              ...GlobalMaterialLocalizations.delegates,
+            ],
+            supportedLocales: AppLocalizations.delegate.supportedLocales,
             home: Scaffold(
               body: SizedBox(
                 width: 240,
@@ -32,11 +40,12 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
       final label = delay < 0
-          ? 'Timeout'
+          ? '超时'
           : delay == 0
           ? '--'
-          : '$delay ms';
+          : '${(delay / 2).round()} ms';
       expect(find.text(label), findsOneWidget);
       expect(find.text('-1 ms'), findsNothing);
       if (delay < 0) {

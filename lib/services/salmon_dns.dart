@@ -45,46 +45,78 @@ class SalmonDnsResolver {
 void installSalmonDnsFallback(Dio dio) {
   final resolver = SalmonDnsResolver();
   dio.httpClientAdapter = IOHttpClientAdapter(
-    createHttpClient: () => createSalmonHttpClient(resolver),
+    createHttpClient: () =>
+        createSalmonHttpClient(resolver)..findProxy = (_) => 'DIRECT',
   );
 }
 
-HttpClient createSalmonHttpClient(SalmonDnsResolver resolver) {
-  final client = HttpClient();
+HttpClient createSalmonHttpClient(
+  SalmonDnsResolver resolver, {
+  SecurityContext? securityContext,
+}) {
+  final client = HttpClient(context: securityContext);
   client.badCertificateCallback = null;
   client.connectionFactory = (uri, proxyHost, proxyPort) async {
     if (proxyHost != null) return Socket.startConnect(proxyHost, proxyPort!);
     var cancelled = false;
     Socket? connected;
     Future<Socket> connect() async {
-      final addresses = await resolver.resolve(uri.host);
       Object? lastError;
-      for (final address in addresses) {
-        if (cancelled) throw const SocketException('Connection cancelled');
-        try {
-          var socket = await Socket.connect(
-            address,
-            uri.port,
-            timeout: const Duration(seconds: 4),
-          );
-          connected = socket;
-          if (uri.scheme == 'https') {
-            try {
-              socket = await SecureSocket.secure(socket, host: uri.host);
-              connected = socket;
-            } catch (_) {
+      final attempted = <InternetAddress>{};
+      Future<Socket?> tryAddresses(List<InternetAddress> addresses) async {
+        for (final address in addresses.where(
+          (value) => attempted.add(value),
+        )) {
+          if (cancelled) throw const SocketException('Connection cancelled');
+          try {
+            var socket = await Socket.connect(
+              address,
+              uri.port,
+              timeout: const Duration(seconds: 4),
+            );
+            connected = socket;
+            if (uri.scheme == 'https') {
+              try {
+                socket = await SecureSocket.secure(
+                  socket,
+                  host: uri.host,
+                  context: securityContext,
+                ).timeout(const Duration(seconds: 4));
+                connected = socket;
+              } catch (_) {
+                socket.destroy();
+                rethrow;
+              }
+            }
+            if (cancelled) {
               socket.destroy();
+              throw const SocketException('Connection cancelled');
+            }
+            connected = socket;
+            return socket;
+          } catch (error) {
+            if (error is! SocketException &&
+                error is! TlsException &&
+                error is! TimeoutException) {
               rethrow;
             }
+            lastError = error;
           }
-          if (cancelled) {
-            socket.destroy();
-            throw const SocketException('Connection cancelled');
-          }
-          connected = socket;
-          return socket;
-        } on SocketException catch (error) {
-          lastError = error;
+        }
+        return null;
+      }
+
+      final socket = await tryAddresses(await resolver.resolve(uri.host));
+      if (socket != null) return socket;
+      if (!cancelled && InternetAddress.tryParse(uri.host) == null) {
+        // A successful system DNS answer can still be poisoned or blocked.
+        try {
+          final fallback = await tryAddresses(
+            await resolver._resolveEncrypted(uri.host),
+          );
+          if (fallback != null) return fallback;
+        } on Exception {
+          // Keep the original connection/TLS error if DoH also fails.
         }
       }
       throw lastError ?? const SocketException('Connection failed');
@@ -186,6 +218,7 @@ Future<List<InternetAddress>> lookupSalmonDoh(String host) async {
     final client = createSalmonHttpClient(
       SalmonDnsResolver(
         systemLookup: (_) async => [InternetAddress(provider.value)],
+        encryptedLookup: (_) async => [],
       ),
     );
     client.findProxy = (_) => 'DIRECT';

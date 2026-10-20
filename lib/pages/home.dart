@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/manager/app_manager.dart';
 import 'package:fl_clash/models/common.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/services/salmon_analytics.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -130,10 +133,27 @@ class _HomePageViewState extends ConsumerState<_HomePageView> {
     super.initState();
     _pageController = PageController(initialPage: _pageIndex);
     ref.listenManual(currentPageLabelProvider, (prev, next) {
+      _trackPage(next);
       if (prev != next) {
         _toPage(next);
       }
     });
+    _trackPage(ref.read(currentPageLabelProvider));
+  }
+
+  void _trackPage(PageLabel page) {
+    final screen = switch (page) {
+      PageLabel.dashboard => SalmonAnalyticsScreen.home,
+      PageLabel.profiles => SalmonAnalyticsScreen.nodes,
+      PageLabel.proxies => SalmonAnalyticsScreen.plans,
+      PageLabel.tools => SalmonAnalyticsScreen.account,
+      PageLabel.invites => SalmonAnalyticsScreen.invitations,
+      PageLabel.customerService => SalmonAnalyticsScreen.support,
+      _ => null,
+    };
+    if (screen != null) {
+      unawaited(salmonAnalytics.trackScreen(screen));
+    }
   }
 
   @override

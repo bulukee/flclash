@@ -954,9 +954,24 @@ class MessageLookup extends MessageLookupByLibrary {
     "ruleProviders": MessageLookupByLibrary.simpleMessage("Провайдеры правил"),
     "ruleSet": MessageLookupByLibrary.simpleMessage("Набор правил"),
     "ruleTarget": MessageLookupByLibrary.simpleMessage("Цель правила"),
+    "salmonAnalyticsDescription": MessageLookupByLibrary.simpleMessage(
+      "Отправляет посещения экранов и платформу в наш Matomo со случайным ID установки. Не отправляет аккаунты, пароли, ссылки подписки или сетевой трафик. Сервер получает ваш IP-адрес. Отправку можно отключить.",
+    ),
+    "salmonAnalyticsSaveFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось сохранить настройку статистики. Повторите попытку.",
+    ),
+    "salmonAnalyticsTitle": MessageLookupByLibrary.simpleMessage(
+      "Статистика использования",
+    ),
     "salmonBuyNow": MessageLookupByLibrary.simpleMessage("Купить"),
     "salmonConnected": MessageLookupByLibrary.simpleMessage(
       "Безопасное подключение",
+    ),
+    "salmonConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "Ошибка подключения. Проверьте сеть и повторите попытку.",
+    ),
+    "salmonCoreRecoveryFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось подключиться к локальной службе прокси. Перезапустите приложение.",
     ),
     "salmonDirectMode": MessageLookupByLibrary.simpleMessage("Прямой"),
     "salmonDisconnected": MessageLookupByLibrary.simpleMessage("Не подключено"),
@@ -981,17 +996,63 @@ class MessageLookup extends MessageLookupByLibrary {
       "Нет доступных тарифов",
     ),
     "salmonNode": MessageLookupByLibrary.simpleMessage("Текущий узел"),
+    "salmonNodeSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Вход выполнен, но узлы не загружены. Обновите их на странице узлов.",
+    ),
+    "salmonNodesUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Узлы не загружены. Повторите обновление чуть позже.",
+    ),
+    "salmonOrderCreating": MessageLookupByLibrary.simpleMessage(
+      "Создание заказа…",
+    ),
+    "salmonOrderInvalid": MessageLookupByLibrary.simpleMessage(
+      "Сервер вернул неверный заказ. Проверьте историю перед повторной попыткой.",
+    ),
+    "salmonPaidSyncFailed": MessageLookupByLibrary.simpleMessage(
+      "Оплата прошла, но узлы не обновлены. Обновите их на странице узлов.",
+    ),
+    "salmonPaymentOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось открыть страницу оплаты. Продолжите оплату в истории заказов.",
+    ),
+    "salmonPaymentPreparing": MessageLookupByLibrary.simpleMessage(
+      "Открытие оплаты…",
+    ),
+    "salmonPaymentSyncing": MessageLookupByLibrary.simpleMessage(
+      "Оплата подтверждена. Обновление тарифа и узлов…",
+    ),
+    "salmonPaymentWaiting": MessageLookupByLibrary.simpleMessage(
+      "Ожидание подтверждения оплаты",
+    ),
+    "salmonPaymentWaitingHint": MessageLookupByLibrary.simpleMessage(
+      "Автоматическая проверка длится до 45 секунд. Можно выйти и позже проверить историю заказов.",
+    ),
     "salmonPlan": MessageLookupByLibrary.simpleMessage("Тарифный план"),
     "salmonPlans": MessageLookupByLibrary.simpleMessage("Тарифы"),
     "salmonPlansSubtitle": MessageLookupByLibrary.simpleMessage(
       "Быстрая и стабильная сеть",
     ),
     "salmonPlansTitle": MessageLookupByLibrary.simpleMessage("Выберите тариф"),
+    "salmonRequestTimeout": MessageLookupByLibrary.simpleMessage(
+      "Сервер не ответил вовремя. Повторите позже.",
+    ),
     "salmonRequiredField": MessageLookupByLibrary.simpleMessage(
       "Обязательное поле",
     ),
+    "salmonRetry": MessageLookupByLibrary.simpleMessage("Повторить"),
     "salmonRuleMode": MessageLookupByLibrary.simpleMessage("Правила"),
+    "salmonSecureConnectionFailed": MessageLookupByLibrary.simpleMessage(
+      "Не удалось установить защищённое соединение. Проверьте сеть или повторите позже.",
+    ),
     "salmonSelectNode": MessageLookupByLibrary.simpleMessage("Выбрать узел"),
+    "salmonSessionExpired": MessageLookupByLibrary.simpleMessage(
+      "Сеанс истёк. Войдите снова.",
+    ),
+    "salmonSubscriptionChanged": MessageLookupByLibrary.simpleMessage(
+      "Подписка изменена. Обновите узлы ещё раз.",
+    ),
+    "salmonSubscriptionMissing": MessageLookupByLibrary.simpleMessage(
+      "Сервер не вернул адрес подписки. Проверьте её состояние.",
+    ),
     "salmonTapConnect": MessageLookupByLibrary.simpleMessage(
       "Нажмите для подключения",
     ),

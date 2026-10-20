@@ -28,7 +28,7 @@ class ProxyCard extends StatelessWidget {
   Measure get measure => globalState.measure;
 
   Widget _buildDelayText() => Consumer(
-    builder: (_, ref, _) {
+    builder: (context, ref, _) {
       final roundTrip = ref.watch(
         delayProvider(proxyName: proxy.name, testUrl: testUrl),
       );
@@ -38,7 +38,7 @@ class ProxyCard extends StatelessWidget {
           : delay == 0
           ? '...'
           : delay < 0
-          ? 'Timeout'
+          ? context.appLocalizations.timeout
           : '$delay ms';
       final color = delay == null || delay == 0
           ? const Color(0xFF7B8798)

@@ -6,6 +6,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/pages/salmon_auth_pages.dart';
 import 'package:fl_clash/services/salmon_profile_sync.dart';
 import 'package:fl_clash/services/salmon_service.dart';
+import 'package:fl_clash/services/salmon_analytics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -28,6 +29,7 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
   _SalmonGateStatus _status = _SalmonGateStatus.loading;
   String? _error;
   bool _submitting = false;
+  Future<void> _logoutCleanup = Future<void>.value();
 
   @override
   void initState() {
@@ -37,7 +39,16 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
   }
 
   void _onSessionChanged() {
-    if (mounted) _setStatus(_SalmonGateStatus.login);
+    if (!mounted) return;
+    ref.read(currentProfileIdProvider.notifier).value = null;
+    ref.read(groupsProvider.notifier).value = [];
+    _logoutCleanup = ref
+        .read(setupActionProvider.notifier)
+        .updateStatus(false)
+        .catchError((Object error) {
+          debugPrint('Logout connection cleanup failed: $error');
+        });
+    _setStatus(_SalmonGateStatus.login);
   }
 
   @override
@@ -93,7 +104,7 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
       );
       if (!mounted || session == null || session.subscribeUrl.isEmpty) return;
       try {
-        await _syncProfile(session.subscribeUrl);
+        await _syncProfile(session.subscribeUrl, session.generation);
       } catch (error) {
         debugPrint('Background subscription sync skipped: $error');
       }
@@ -109,6 +120,8 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
       _error = null;
     });
     try {
+      await _logoutCleanup;
+      if (!mounted) return;
       final session = await salmonService.login(
         account: _accountController.text.trim(),
         password: _passwordController.text,
@@ -116,12 +129,34 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
       _passwordController.clear();
       if (session.subscribeUrl.isNotEmpty) {
         try {
-          await _syncProfile(session.subscribeUrl);
+          await _syncProfile(session.subscribeUrl, session.generation);
         } catch (error) {
           debugPrint('Post-login subscription sync skipped: $error');
+          if (mounted &&
+              session.generation == salmonService.sessionGeneration) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    salmonFriendlyError(
+                      error,
+                      fallback: context.appLocalizations.salmonNodeSyncFailed,
+                    ),
+                  ),
+                ),
+              );
+            });
+          }
         }
       }
+      if (!mounted || session.generation != salmonService.sessionGeneration) {
+        return;
+      }
       _setStatus(_SalmonGateStatus.ready);
+      if (session.subscribeUrl.isEmpty) {
+        unawaited(_refreshSessionAfterEntry(session));
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -171,29 +206,8 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
     await _openLink(supportUrl);
   }
 
-  Future<void> _syncProfile(String subscribeUrl) async {
-    try {
-      await _saveProfile(subscribeUrl);
-    } catch (_) {
-      final baseUrl = await salmonService.savedBaseUrl();
-      final source = Uri.tryParse(subscribeUrl);
-      final base = baseUrl == null ? null : Uri.tryParse(baseUrl);
-      if (source == null || base == null || base.host.isEmpty) rethrow;
-      final fallbackUrl = Uri(
-        scheme: base.scheme,
-        host: base.host,
-        port: base.hasPort ? base.port : null,
-        path: source.path,
-        query: source.hasQuery ? source.query : null,
-        fragment: source.hasFragment ? source.fragment : null,
-      ).toString();
-      if (fallbackUrl == subscribeUrl) rethrow;
-      await _saveProfile(fallbackUrl);
-    }
-  }
-
-  Future<void> _saveProfile(String subscribeUrl) async {
-    await syncSalmonProfile(ref, subscribeUrl);
+  Future<void> _syncProfile(String subscribeUrl, int generation) async {
+    await syncSalmonProfile(ref, subscribeUrl, expectedGeneration: generation);
   }
 
   String _friendlyError(Object error) {
@@ -216,11 +230,17 @@ class _SalmonGateState extends ConsumerState<SalmonGate> {
         value.contains('receive timeout')) {
       return '服务器暂时无法连接，请稍后重试';
     }
-    return value.isEmpty ? context.appLocalizations.salmonLoginFailed : value;
+    return salmonFriendlyError(
+      error,
+      fallback: context.appLocalizations.salmonLoginFailed,
+    );
   }
 
   void _setStatus(_SalmonGateStatus status) {
     if (!mounted) return;
+    if (status == _SalmonGateStatus.login) {
+      unawaited(salmonAnalytics.trackScreen(SalmonAnalyticsScreen.login));
+    }
     setState(() {
       _status = status;
       _submitting = false;

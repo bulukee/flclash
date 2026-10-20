@@ -3,6 +3,8 @@ package com.follow.clash.common
 import android.content.Intent
 import android.os.IBinder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -27,29 +29,44 @@ class ServiceDelegate<T>(
 
     val serviceState: StateFlow<Pair<T?, String>?> = _serviceState
     private var job: Job? = null
+    private var generation = 0L
 
-    private fun handleBind(data: Pair<IBinder?, String>) {
-        data.first?.let {
-            _serviceState.value = Pair(interfaceCreator(it), data.second)
-        } ?: run {
-            _serviceState.value = Pair(null, data.second)
-            unbind()
-            onServiceDisconnected?.invoke(data.second)
-            _bindingState.set(false)
+    private fun handleBind(bindingGeneration: Long, data: Pair<IBinder?, String>) {
+        val disconnected = synchronized(this) {
+            if (bindingGeneration != generation || !_bindingState.get()) return
+            val binder = data.first
+            if (binder != null) {
+                _serviceState.value = Pair(interfaceCreator(binder), data.second)
+                false
+            } else {
+                _serviceState.value = Pair(null, data.second)
+                _bindingState.set(false)
+                job?.cancel()
+                job = null
+                true
+            }
         }
+        if (disconnected) onServiceDisconnected?.invoke(data.second)
     }
 
+    @Synchronized
     fun bind() {
         if (_bindingState.compareAndSet(false, true)) {
             job?.cancel()
             job = null
             _serviceState.value = null
-            job = launch {
-                runCatching {
+            val bindingGeneration = ++generation
+            job = launch(start = CoroutineStart.LAZY) {
+                try {
                     GlobalState.application.bindServiceFlow<IBinder>(intent)
-                        .collect { handleBind(it) }
+                        .collect { handleBind(bindingGeneration, it) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    handleBind(bindingGeneration, Pair(null, error.message ?: "Service binding failed"))
                 }
             }
+            job?.start()
         }
     }
 
@@ -68,11 +85,12 @@ class ServiceDelegate<T>(
         }
     }
 
+    @Synchronized
     fun unbind() {
-        if (_bindingState.compareAndSet(true, false)) {
-            job?.cancel()
-            job = null
-            _serviceState.value = null
-        }
+        generation++
+        _bindingState.set(false)
+        job?.cancel()
+        job = null
+        _serviceState.value = null
     }
 }

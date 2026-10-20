@@ -113,6 +113,7 @@ class CommonAction extends _$CommonAction {
 @Riverpod(keepAlive: true)
 class SetupAction extends _$SetupAction {
   Timer? _updateTimer;
+  Future<void> _configWriteTail = Future<void>.value();
   DateTime? startTime;
 
   bool get isStart => startTime != null && startTime!.isBeforeNow;
@@ -266,14 +267,18 @@ class SetupAction extends _$SetupAction {
   Future<void> applyProfile({
     bool silence = false,
     bool force = false,
+    bool throwOnError = false,
     VoidCallback? preloadInvoke,
   }) async {
     await _setupConfig(
       force: force,
       silence: silence,
+      throwOnError: throwOnError,
       preloadInvoke: preloadInvoke,
       onUpdated: () async {
-        await ref.read(proxiesActionProvider.notifier).updateGroups();
+        await ref
+            .read(proxiesActionProvider.notifier)
+            .updateGroups(throwOnError: throwOnError);
         await ref.read(providersProvider.notifier).syncProviders();
       },
     );
@@ -284,7 +289,7 @@ class SetupAction extends _$SetupAction {
     required PatchClashConfig patchConfig,
   }) async {
     final profileId = setupState.profileId;
-    if (profileId == null) return const VM2('', '');
+    if (profileId == null) return VM2('{}', '{}'.toMd5());
     final defaultUA = globalState.packageInfo.ua;
     final networkVM2 = ref.read(
       networkSettingProvider.select(
@@ -369,6 +374,7 @@ class SetupAction extends _$SetupAction {
   Future<void> _setupConfig({
     bool force = false,
     bool silence = false,
+    bool throwOnError = false,
     VoidCallback? preloadInvoke,
     FutureOr Function()? onUpdated,
   }) async {
@@ -376,7 +382,7 @@ class SetupAction extends _$SetupAction {
     final nextProfile = await profile?.checkAndUpdateAndCopy();
     if (nextProfile != null) {
       profile = nextProfile;
-      ref.read(profilesProvider.notifier).put(nextProfile);
+      await ref.read(profilesProvider.notifier).putAndWait(nextProfile);
     }
     commonPrint.log('setup ===> ${profile?.id}');
     final patchConfig = ref.read(patchClashConfigProvider);
@@ -396,23 +402,57 @@ class SetupAction extends _$SetupAction {
     );
     final yamlString = vm2.a;
     final yamlMd5 = vm2.b;
-    if (yamlMd5 == globalState.lastConfigMd5 && force == false) return;
-    await globalState.loadingRun(
-      () async {
-        final configFilePath = await appPath.configFilePath;
-        await File(configFilePath).safeWriteAsString(yamlString);
-        globalState.lastConfigMd5 = yamlMd5;
-        final message = await coreController.setupConfig(
-          setupState: setupState,
-          params: _setupParams,
-          preloadInvoke: preloadInvoke,
-        );
-        if (message.isNotEmpty && !message.endsWith('is empty')) {
-          throw message;
+    Future<void> apply() async {
+      final previousWrite = _configWriteTail;
+      final release = Completer<void>();
+      _configWriteTail = release.future;
+      try {
+        await previousWrite;
+        if (!ref.mounted) return;
+        final selected = ref.read(currentProfileProvider);
+        if (selected?.id != profile?.id ||
+            selected?.url != profile?.url ||
+            selected?.lastUpdateDate != profile?.lastUpdateDate) {
+          if (throwOnError) {
+            throw StateError(currentAppLocalizations.salmonSubscriptionChanged);
+          }
+          return;
         }
-        ref.read(checkIpNumProvider.notifier).add();
-        await onUpdated?.call();
-      },
+        if (yamlMd5 == globalState.lastConfigMd5 && !force) return;
+        final configFile = File(await appPath.configFilePath);
+        final previousBytes = await configFile.exists()
+            ? await configFile.readAsBytes()
+            : null;
+        try {
+          await configFile.safeWriteAsString(yamlString);
+          final message = await coreController.setupConfig(
+            setupState: setupState,
+            params: _setupParams,
+            preloadInvoke: preloadInvoke,
+          );
+          if (message.isNotEmpty) throw StateError(message);
+        } catch (_) {
+          if (previousBytes != null) {
+            await configFile.safeWriteAsBytes(previousBytes);
+          } else {
+            await configFile.safeDelete();
+          }
+          rethrow;
+        }
+        globalState.lastConfigMd5 = yamlMd5;
+      } finally {
+        release.complete();
+      }
+      ref.read(checkIpNumProvider.notifier).add();
+      await onUpdated?.call();
+    }
+
+    if (throwOnError) {
+      await apply();
+      return;
+    }
+    await globalState.loadingRun(
+      apply,
       silence: true,
       tag: !silence ? LoadingTag.proxies : null,
     );
@@ -482,16 +522,23 @@ class BackupAction extends _$BackupAction {
 
 @Riverpod(keepAlive: true)
 class CoreAction extends _$CoreAction {
+  Future<bool>? _recoveryFuture;
+
+  @protected
+  CoreController get controller => coreController;
+
   @override
   void build() {}
 
   Future<void> initCore() async {
-    final isInit = await coreController.isInit;
+    final isInit = await controller.isInit;
 
     final version = ref.read(versionProvider);
     if (!isInit) {
-      final res = await coreController.init(version);
+      final res = await controller.init(version);
       commonPrint.log('init result: $res');
+      if (!res) throw StateError('Core initialization failed');
+      globalState.lastConfigMd5 = null;
     } else {
       await ref.read(proxiesActionProvider.notifier).updateGroups();
     }
@@ -499,23 +546,36 @@ class CoreAction extends _$CoreAction {
 
   Future<void> connectCore() async {
     ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
-    final result = await Future.wait([
-      coreController.preload(),
-      Future.delayed(const Duration(milliseconds: 300)),
-    ]);
-    final String message = result[0];
-    if (message.isNotEmpty) {
+    try {
+      final result = await Future.wait([
+        controller.preload(),
+        Future.delayed(const Duration(milliseconds: 300)),
+      ]);
+      final String message = result[0];
+      if (message.isNotEmpty) throw StateError(message);
+      ref.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    } catch (_) {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
-      globalState.showNotifier(message);
-      return;
+      rethrow;
     }
-    ref.read(coreStatusProvider.notifier).value = CoreStatus.connected;
   }
 
   Future<bool> recoverCore() async {
+    final inFlight = _recoveryFuture;
+    if (inFlight != null) return inFlight;
+    final future = _recoverCore();
+    _recoveryFuture = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_recoveryFuture, future)) _recoveryFuture = null;
+    }
+  }
+
+  Future<bool> _recoverCore() async {
     try {
       if (system.isAndroid) {
-        coreController.resetConnectionState();
+        controller.resetConnectionState();
       }
       ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
       await connectCore();
@@ -523,6 +583,14 @@ class CoreAction extends _$CoreAction {
         return false;
       }
       await initCore();
+      await ref
+          .read(setupActionProvider.notifier)
+          .applyProfile(force: true, silence: true, throwOnError: true);
+      if (system.isDesktop && ref.read(isStartProvider)) {
+        if (!await controller.startListener()) {
+          throw StateError('Core listeners could not be restored');
+        }
+      }
       return true;
     } catch (error) {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.disconnected;
@@ -740,8 +808,29 @@ class ThemeAction extends _$ThemeAction {
 
 @Riverpod(keepAlive: true)
 class ProxiesAction extends _$ProxiesAction {
+  int _readGeneration = 0;
+
+  @protected
+  CoreController get controller => coreController;
+
   @override
-  void build() {}
+  void build() {
+    ref.listen(currentProfileIdProvider, (previous, next) {
+      if (previous != next) {
+        _readGeneration++;
+        ref.read(groupsProvider.notifier).value = [];
+      }
+    });
+    ref.listen(
+      currentProfileProvider.select((profile) => (profile?.id, profile?.url)),
+      (previous, next) {
+        if (previous != next) {
+          _readGeneration++;
+          ref.read(groupsProvider.notifier).value = [];
+        }
+      },
+    );
+  }
 
   void updateGroupsDebounce([Duration? duration]) {
     debouncer.call(FunctionTag.updateGroups, updateGroups, duration: duration);
@@ -757,11 +846,24 @@ class ProxiesAction extends _$ProxiesAction {
     }, args: [groupName, proxyName]);
   }
 
-  Future<void> updateGroups() async {
+  Future<void> updateGroups({bool throwOnError = false}) async {
+    final generation = ++_readGeneration;
+    final profile = ref.read(currentProfileProvider);
+    if (profile == null) {
+      ref.read(groupsProvider.notifier).value = [];
+      return;
+    }
+    bool isCurrent() {
+      if (!ref.mounted || generation != _readGeneration) return false;
+      final current = ref.read(currentProfileProvider);
+      return current?.id == profile.id && current?.url == profile.url;
+    }
+
     try {
       commonPrint.log('updateGroups');
-      ref.read(groupsProvider.notifier).value = await retry(
-        task: () async {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        if (!isCurrent()) return;
+        try {
           final sortType = ref.read(
             proxiesStyleSettingProvider.select((state) => state.sortType),
           );
@@ -772,18 +874,30 @@ class ProxiesAction extends _$ProxiesAction {
           final selectedMap = ref.read(
             currentProfileProvider.select((state) => state?.selectedMap ?? {}),
           );
-          return coreController.getProxiesGroups(
+          final groups = await controller.getProxiesGroups(
             selectedMap: selectedMap,
             sortType: sortType,
             delayMap: delayMap,
             defaultTestUrl: testUrl,
           );
-        },
-        retryIf: (res) => res.isEmpty,
-      );
+          if (!isCurrent()) return;
+          if (groups.isEmpty) {
+            throw StateError(currentAppLocalizations.salmonNodesUnavailable);
+          }
+          ref.read(groupsProvider.notifier).value = groups;
+          return;
+        } catch (_) {
+          if (!isCurrent()) return;
+          if (attempt == 2) rethrow;
+          await Future<void>.delayed(midDuration);
+        }
+      }
     } catch (e) {
-      commonPrint.log('updateGroups error: $e');
-      ref.read(groupsProvider.notifier).value = [];
+      commonPrint.log(
+        'updateGroups failed; keeping current profile nodes: $e',
+        logLevel: LogLevel.warning,
+      );
+      if (throwOnError) rethrow;
     }
   }
 
@@ -911,6 +1025,7 @@ class ProfilesAction extends _$ProfilesAction {
   Future<void> updateProfile(
     Profile profile, {
     bool showLoading = false,
+    bool applyImmediately = false,
   }) async {
     try {
       if (showLoading) {
@@ -920,9 +1035,15 @@ class ProfilesAction extends _$ProfilesAction {
       final newProfile = await profile.update();
       ref.read(profilesProvider.notifier).put(newProfile);
       if (profile.id == ref.read(currentProfileIdProvider)) {
-        ref
-            .read(setupActionProvider.notifier)
-            .applyProfileDebounce(silence: true);
+        if (applyImmediately) {
+          await ref
+              .read(setupActionProvider.notifier)
+              .applyProfile(force: true, silence: true, throwOnError: true);
+        } else {
+          ref
+              .read(setupActionProvider.notifier)
+              .applyProfileDebounce(silence: true);
+        }
       }
     } finally {
       ref.read(isUpdatingProvider(profile.updatingKey).notifier).value = false;

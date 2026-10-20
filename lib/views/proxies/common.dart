@@ -5,6 +5,8 @@ import 'package:fl_clash/core/core.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/services/salmon_delay_queue.dart';
+import 'package:fl_clash/services/salmon_service.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -14,7 +16,19 @@ const _delayCacheAtKey = 'salmon_delay_cache_at_v1';
 bool _delayCacheRestored = false;
 
 const _delayAttemptCount = 2;
-const _delayBatchSize = 10;
+final _delayQueue = SalmonDelayQueue();
+
+bool Function() _currentDelaySession() {
+  final ref = globalState.container;
+  final generation = salmonService.sessionGeneration;
+  final profile = ref.read(currentProfileProvider);
+  return () {
+    final current = ref.read(currentProfileProvider);
+    return generation == salmonService.sessionGeneration &&
+        current?.id == profile?.id &&
+        current?.url == profile?.url;
+  };
+}
 
 /// Restores the last successful delay values immediately. The values remain
 /// useful for 90 days and are replaced in the background by the next test.
@@ -118,6 +132,21 @@ void updateCurrentUnfoldSet(Set<String> value) {
 }
 
 Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
+  final isCurrent = _currentDelaySession();
+  await _delayQueue.run(
+    [proxy],
+    test: (node) => _probeProxyDelay(node, testUrl, isCurrent),
+    shouldContinue: isCurrent,
+  );
+  if (isCurrent()) await _persistDelayCache();
+}
+
+Future<void> _probeProxyDelay(
+  Proxy proxy,
+  String? testUrl,
+  bool Function() isCurrent,
+) async {
+  if (!isCurrent()) return;
   final ref = globalState.container;
   final groups = getGroups();
   final selectedMap = ref.read(
@@ -141,9 +170,10 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
   int? measuredDelay;
   try {
     for (var attempt = 0; attempt < _delayAttemptCount; attempt++) {
+      if (!isCurrent()) return;
       try {
         final result = await coreController.getDelay(
-          defaultTestUrl,
+          displayDelayUrl,
           state.proxyName,
         );
         final value = result.value;
@@ -159,6 +189,7 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
     }
     // Keep the last successful result if both probes fail. The measured
     // minimum overrides any individual core event buffered during the test.
+    if (!isCurrent()) return;
     if (measuredDelay != null) {
       final notifier = ref.read(proxiesActionProvider.notifier);
       notifier.setDelay(
@@ -177,8 +208,17 @@ Future<void> proxyDelayTest(Proxy proxy, [String? testUrl]) async {
   } finally {
     delaySource.endDelayTest(state.proxyName);
   }
-  if (measuredDelay != null && !delaySource.isTesting) {
-    await _persistDelayCache();
+  if (!isCurrent()) return;
+  // With no previous successful value, a failed test must show timeout, not --.
+  final cached = ref.read(
+    delayDataSourceProvider,
+  )[displayDelayUrl]?[state.proxyName];
+  if (measuredDelay == null && (cached == null || cached <= 0)) {
+    ref
+        .read(proxiesActionProvider.notifier)
+        .setDelay(
+          Delay(url: displayDelayUrl, name: state.proxyName, value: -1),
+        );
   }
 }
 
@@ -194,15 +234,20 @@ Future<void> delayTest(
   List<Proxy> proxies, [
   String? testUrl,
   String? groupName,
+  bool Function()? shouldContinue,
 ]) async {
   // Do not use the group-delay endpoint here: several subscriptions return
   // aliases that do not match the visible card names, leaving cards at `--`.
-  // Ten parallel nodes keeps the test responsive without flooding the core.
-  for (final proxyBatch in proxies.batch(_delayBatchSize)) {
-    await Future.wait(
-      proxyBatch.map((proxy) => proxyDelayTest(proxy, testUrl)),
-    );
-  }
+  // Preserve the visible order in both the node page and the home node sheet.
+  // Finish both probes for one card before advancing to the next card.
+  final isCurrent = _currentDelaySession();
+  bool active() => isCurrent() && (shouldContinue?.call() ?? true);
+  await _delayQueue.run(
+    proxies,
+    test: (proxy) => _probeProxyDelay(proxy, testUrl, active),
+    shouldContinue: active,
+  );
+  if (!isCurrent()) return;
   globalState.container.read(sortNumProvider.notifier).add();
   await _persistDelayCache();
 }

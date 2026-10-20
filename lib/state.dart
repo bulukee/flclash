@@ -67,8 +67,6 @@ class GlobalState {
       .read(patchClashConfigProvider.select((state) => state.globalUa))
       .takeFirstValid([packageInfo.ua]);
 
-  BuildContext get _context => navigatorKey.currentContext!;
-
   Future<ProviderContainer> _initData(int version) async {
     final appState = AppState(
       brightness: WidgetsBinding.instance.platformDispatcher.platformBrightness,
@@ -350,7 +348,6 @@ class GlobalState {
     }
     await container.read(systemActionProvider.notifier).handleExit();
   }
-
 }
 
 final globalState = GlobalState();

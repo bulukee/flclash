@@ -114,7 +114,27 @@ abstract class CoreHandlerInterface with CoreInterface {
     Duration? timeout,
   });
 
+  Future<T> _requireResponse<T>({
+    required ActionMethod method,
+    dynamic data,
+    Duration? timeout,
+  }) async {
+    final response = await _invoke<T>(
+      method: method,
+      data: data,
+      timeout: timeout,
+    );
+    if (response == null) {
+      throw StateError('Core did not respond to ${method.name}');
+    }
+    return response;
+  }
+
   Future<T> parasResult<T>(ActionResult result) async {
+    if (result.code == ResultType.error &&
+        result.method != ActionMethod.getConfig) {
+      throw StateError('Core ${result.method.name} failed: ${result.data}');
+    }
     return switch (result.method) {
       ActionMethod.getConfig => result.toResult as T,
       _ => result.data as T,
@@ -145,11 +165,10 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   @override
   Future<String> validateConfig(String path) async {
-    return await _invoke<String>(
-          method: ActionMethod.validateConfig,
-          data: path,
-        ) ??
-        '';
+    return _requireResponse<String>(
+      method: ActionMethod.validateConfig,
+      data: path,
+    );
   }
 
   @override
@@ -163,17 +182,15 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   @override
   Future<Result> getConfig(String path) async {
-    final res = await _invoke(method: ActionMethod.getConfig, data: path);
-    return res ?? Result.success({});
+    return _requireResponse<Result>(method: ActionMethod.getConfig, data: path);
   }
 
   @override
   Future<String> setupConfig(SetupParams setupParams) async {
-    return await _invoke<String>(
-          method: ActionMethod.setupConfig,
-          data: json.encode(setupParams),
-        ) ??
-        '';
+    return _requireResponse<String>(
+      method: ActionMethod.setupConfig,
+      data: json.encode(setupParams),
+    );
   }
 
   @override
@@ -183,12 +200,11 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   @override
   Future<ProxiesData> getProxies() async {
-    final data = await _invoke<Map<String, dynamic>>(
+    final data = await _requireResponse<Map<String, dynamic>>(
       method: ActionMethod.getProxies,
+      timeout: const Duration(seconds: 15),
     );
-    return data != null
-        ? ProxiesData.fromJson(data)
-        : const ProxiesData(proxies: {}, all: []);
+    return ProxiesData.fromJson(data);
   }
 
   @override
