@@ -174,7 +174,7 @@ void main() {
         ..useCertificateChainBytes(certificate)
         ..usePrivateKey('test/fixtures/salmon_dns/test-key.pem');
       final trusted = SecurityContext(withTrustedRoots: false)
-        ..setTrustedCertificatesBytes(certificate);
+        ..setTrustedCertificates('test/fixtures/salmon_dns/ca-cert.pem');
       final server = await HttpServer.bindSecure(
         InternetAddress.loopbackIPv4,
         0,
@@ -190,6 +190,7 @@ void main() {
         () => createSalmonHttpClient(
           SalmonDnsResolver(
             systemLookup: (_) async => [InternetAddress.loopbackIPv4],
+            encryptedLookup: (_) async => [],
           ),
           securityContext: trusted,
         ),
@@ -208,6 +209,50 @@ void main() {
       );
       expect(await utf8.decoder.bind(response).join(), 'secure');
       expect(await served.future, 'test.example:${server.port}');
+    },
+  );
+
+  test(
+    'rejects a trusted HTTPS certificate for a different hostname',
+    () async {
+      final context = SecurityContext()
+        ..useCertificateChain('test/fixtures/salmon_dns/test-cert.pem')
+        ..usePrivateKey('test/fixtures/salmon_dns/test-key.pem');
+      final trusted = SecurityContext(withTrustedRoots: false)
+        ..setTrustedCertificates('test/fixtures/salmon_dns/ca-cert.pem');
+      final server = await HttpServer.bindSecure(
+        InternetAddress.loopbackIPv4,
+        0,
+        context,
+      );
+      var receivedRequest = false;
+      final errors = <Object>[];
+      final subscription = server.listen((request) async {
+        receivedRequest = true;
+        await request.response.close();
+      }, onError: errors.add);
+      final client = HttpOverrides.runWithHttpOverrides(
+        () => createSalmonHttpClient(
+          SalmonDnsResolver(
+            systemLookup: (_) async => [InternetAddress.loopbackIPv4],
+            encryptedLookup: (_) async => [],
+          ),
+          securityContext: trusted,
+        ),
+        _RealHttpOverrides(),
+      )..findProxy = (_) => 'DIRECT';
+      addTearDown(() async {
+        client.close(force: true);
+        await subscription.cancel();
+        await server.close(force: true);
+      });
+      await expectLater(
+        client
+            .getUrl(Uri.parse('https://wrong.example:${server.port}/'))
+            .timeout(const Duration(seconds: 5)),
+        throwsA(isA<HandshakeException>()),
+      );
+      expect(receivedRequest, isFalse);
     },
   );
 
